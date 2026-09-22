@@ -33,11 +33,14 @@ On macOS or Linux with a C/C++ compiler:
 ./tools/check-core.sh
 ECO_FORCE_SCALAR=1 ./tools/check-core.sh
 ./tools/render-demo.sh /tmp/eco-demo.wav
+./tools/bench-render.sh
 ```
 
 The renderer creates four bars of the integrated LIGHT instruments as a 48 kHz
 stereo WAV. It refuses to overwrite an existing output. It does not require Qt,
-PipeWire, Python packages or a network connection.
+PipeWire, Python packages or a network connection. The bench script reports
+render throughput at 256/128/64-frame block sizes; per-host results should be
+re-measured on target boards before choosing a low-buffer default.
 
 ## Build the Yocto developer image
 

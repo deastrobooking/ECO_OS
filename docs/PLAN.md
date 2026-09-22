@@ -107,6 +107,10 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
    polyphony in the project model.
 4. Split DSP into event-aligned blocks and cache coefficients. Current per-sample
    LIGHT wrappers prioritize correctness; benchmark before low-buffer claims.
+   `tools/bench-render.sh` measures current per-sample throughput at
+   256/128/64-frame block sizes (~25x realtime, flat across block sizes, on
+   Apple M-series arm64) — a developer host signal, not board qualification.
+   Re-run on target boards before deciding block segmentation is warranted.
 5. Add project model serialization tests on Linux and then `.light` import with
    relative assets. Add sample ownership/reclamation without callback frees.
 6. Integrate plugins only after audio continuity, RT behavior and persistence pass.
