@@ -167,7 +167,73 @@ int main() {
     render(second, b.data(), 64);
     render(second, b.data() + 128, 192);
     check(a == b, "render independent of block size");
+    {
+        // Audition scheduled mid-block: exact silence strictly before its
+        // frameOffset, audible output at/after it.
+        eco::Engine timed;
+        eco::Command audition;
+        audition.action = eco::Action::Audition;
+        audition.track = 4;
+        audition.pitch = 60;
+        audition.velocity = .8f;
+        audition.frameOffset = 100;
+        timed.commands.push(audition);
+        std::vector<float> buf(4800 * 2);
+        render(timed, buf.data(), 4800);
+        for (unsigned i = 0; i < 100; i++)
+            check(buf[i * 2] == 0 && buf[i * 2 + 1] == 0,
+                  "silence strictly before scheduled frame offset");
+        double timedEnergy = 0;
+        for (unsigned i = 100; i < 4800; i++)
+            timedEnergy +=
+                double(buf[i * 2]) * buf[i * 2] + double(buf[i * 2 + 1]) * buf[i * 2 + 1];
+        check(timedEnergy > 1e-6, "audible sound at/after scheduled frame offset");
+    }
+    {
+        // Scheduling follows frameOffset, not push order: NoteOff (offset 50)
+        // pushed before Audition (offset 0) must still let the note sound
+        // first and release after it, not the reverse.
+        eco::Engine ordering;
+        eco::Command noteOff;
+        noteOff.action = eco::Action::NoteOff;
+        noteOff.track = 4;
+        noteOff.pitch = 60;
+        noteOff.frameOffset = 50;
+        eco::Command audition;
+        audition.action = eco::Action::Audition;
+        audition.track = 4;
+        audition.pitch = 60;
+        audition.velocity = .8f;
+        audition.frameOffset = 0;
+        ordering.commands.push(noteOff);
+        ordering.commands.push(audition);
+        std::vector<float> buf(4800 * 2);
+        render(ordering, buf.data(), 4800);
+        double orderingEnergy = 0;
+        for (auto v : buf) {
+            check(std::isfinite(v), "offset-ordered commands produce finite output");
+            orderingEnergy += double(v) * v;
+        }
+        check(orderingEnergy > 1e-6, "note sounds despite an earlier-pushed later-offset NoteOff");
+    }
+    {
+        // A frameOffset beyond the block is clamped to the last valid frame,
+        // not left to silently drop or index out of bounds.
+        eco::Engine clamped;
+        eco::Command audition;
+        audition.action = eco::Action::Audition;
+        audition.track = 4;
+        audition.pitch = 60;
+        audition.velocity = .8f;
+        audition.frameOffset = 1000000;
+        clamped.commands.push(audition);
+        std::array<float, 256> buf{};
+        render(clamped, buf.data(), 128);
+        for (auto v : buf)
+            check(std::isfinite(v), "out-of-range frame offset clamped safely");
+    }
     std::puts("PASS: LIGHT FM6/release, drum isolation, SIMD scalar equivalence/tails, queue "
               "overflow/wrap, silence, sample clock, finite audio, quantized launch, stop, mute, "
-              "block-size invariance, no C++ render allocations");
+              "block-size invariance, sample-accurate command scheduling, no C++ render "
+              "allocations");
 }

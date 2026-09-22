@@ -81,6 +81,11 @@ struct Command {
     std::array<int, Tracks> active{};
     int track = 0, clip = 0, pitch = 60;
     float velocity = .8f;
+    // Sample offset within the render() block this command should take
+    // effect at (Audition/NoteOff only; other actions apply immediately).
+    // A default of 0 applies at the start of the block, matching prior
+    // behavior for callers that don't set it.
+    unsigned frameOffset = 0;
 };
 class Engine {
     LightInstruments instruments;
@@ -106,6 +111,10 @@ class Engine {
     Engine() = default;
     void render(float *output, std::size_t frames) noexcept {
         Command cmd;
+        // Audition/NoteOff carry a sample offset and are applied mid-block,
+        // at the exact frame they target, instead of all at the block start.
+        std::array<Command, 31> timed{};
+        unsigned timedCount = 0;
         for (unsigned count = 0; count < 31 && commands.pop(cmd); count++)
             switch (cmd.action) {
             case Action::Restore:
@@ -144,15 +153,22 @@ class Engine {
                 }
                 break;
             case Action::Audition:
-                trigger(cmd.track, cmd.pitch, cmd.velocity);
-                break;
             case Action::NoteOff:
-                instruments.noteOff(cmd.track, cmd.pitch);
+                cmd.frameOffset =
+                    frames > 0 ? std::min<unsigned>(cmd.frameOffset, unsigned(frames) - 1) : 0;
+                timed[timedCount++] = cmd;
                 break;
             }
         const bool solo = std::any_of(project.tracks.begin(), project.tracks.end(),
                                       [](auto &t) { return t.solo; });
         for (std::size_t n = 0; n < frames; n++) {
+            for (unsigned i = 0; i < timedCount; i++)
+                if (timed[i].frameOffset == n) {
+                    if (timed[i].action == Action::Audition)
+                        trigger(timed[i].track, timed[i].pitch, timed[i].velocity);
+                    else
+                        instruments.noteOff(timed[i].track, timed[i].pitch);
+                }
             if (playing && double(frame) >= nextStep) {
                 step = (step + 1) % Steps;
                 if (step == 0)

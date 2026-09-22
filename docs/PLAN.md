@@ -105,6 +105,15 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
 3. Port MIDI to timestamped sample-offset events; current 33 ms UI polling is
    adequate only for a functional demonstration. Preserve note duration and
    polyphony in the project model.
+   Done: `Command::frameOffset` lets Engine schedule Audition/NoteOff at an
+   exact sample within a render block instead of only at block start, tested
+   in engine_test.cpp; Controller reads ALSA MIDI on a `QSocketNotifier` tied
+   to the sequencer fd, not the 33 ms UI timer, removing polling latency from
+   input capture. Pending: ALSA event timestamps are not yet converted to a
+   `frameOffset` (needs Audio/PipeWire to expose current stream frame
+   position — untestable without a Linux/PipeWire host); note duration and
+   true multi-note polyphony are not represented in the project model, which
+   still stores one on/off velocity per 16th-step slot per track.
 4. Split DSP into event-aligned blocks and cache coefficients. Current per-sample
    LIGHT wrappers prioritize correctness; benchmark before low-buffer claims.
    `tools/bench-render.sh` measures current per-sample throughput at

@@ -8,11 +8,14 @@
 #include <QFileInfo>
 #include <QObject>
 #include <QSaveFile>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVariantList>
 #include <alsa/asoundlib.h>
 #include <memory>
+#include <poll.h>
+#include <vector>
 
 class Controller : public QObject {
     Q_OBJECT
@@ -33,6 +36,7 @@ class Controller : public QObject {
     std::unique_ptr<Audio> audio;
     QTimer timer;
     snd_seq_t *midi = nullptr;
+    std::vector<QSocketNotifier *> midiNotifiers;
     int selected_ = 0, scene_ = 0;
     bool playing_ = false, armed_ = false;
     QString message_ = "Select a clip. Make something.";
@@ -54,6 +58,10 @@ class Controller : public QObject {
         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                "/session.eco.json";
     }
+    // Commands still land at frameOffset 0 (start of the next render block):
+    // Engine can schedule Audition/NoteOff mid-block, but turning an ALSA
+    // event timestamp into a sample offset needs the audio stream's current
+    // frame position, which Audio (PipeWire) does not expose yet. Follow-up.
     void pollMidi() {
         if (!midi)
             return;
@@ -93,16 +101,30 @@ class Controller : public QObject {
             snd_seq_create_simple_port(
                 midi, "Input", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
                 SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+            // React to MIDI as soon as ALSA has it queued, instead of
+            // waiting on the UI timer: that capped input latency at up to
+            // one tick (33 ms), well past what "timestamped" MIDI needs.
+            const int count = snd_seq_poll_descriptors_count(midi, POLLIN);
+            if (count > 0) {
+                std::vector<pollfd> fds(static_cast<std::size_t>(count));
+                snd_seq_poll_descriptors(midi, fds.data(), static_cast<unsigned>(count), POLLIN);
+                for (const auto &pfd : fds) {
+                    auto *notifier = new QSocketNotifier(pfd.fd, QSocketNotifier::Read, this);
+                    connect(notifier, &QSocketNotifier::activated, this, [this] { pollMidi(); });
+                    midiNotifiers.push_back(notifier);
+                }
+            }
         } else
             midi = nullptr;
-        connect(&timer, &QTimer::timeout, this, [this] {
-            pollMidi();
-            emit tick();
-        });
+        // The timer now only drives UI refresh (playhead/status); MIDI input
+        // no longer depends on it.
+        connect(&timer, &QTimer::timeout, this, [this] { emit tick(); });
         timer.start(33);
     }
     ~Controller() {
         timer.stop();
+        for (auto *notifier : midiNotifiers)
+            delete notifier;
         if (midi)
             snd_seq_close(midi);
     }
