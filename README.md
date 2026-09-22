@@ -21,8 +21,8 @@ boot and latency qualification still need a Linux build host and target boards.
 - Weston kiosk and supervised PipeWire/WirePlumber/application services.
 - Leonardo/Micro USB MIDI controller starter firmware.
 
-Read the [game plan](docs/PLAN.md), [build guide](docs/BUILD.md),
-[LIGHT integration audit](docs/LIGHT-INTEGRATION.md), and
+Read the [game plan](docs/PLAN.md), [UI master document](docs/UI.md),
+[build guide](docs/BUILD.md), [LIGHT integration audit](docs/LIGHT-INTEGRATION.md), and
 [hardware acceptance checklist](docs/HARDWARE.md).
 
 ## Run the portable engine today

@@ -12,7 +12,7 @@ Pinned source: `15f08cae2ea297c8906ffc2cd37bf5e4aa62c693`.
 | Audio host | miniaudio callback holds session mutex | Replaced with native PipeWire adapter and bounded SPSC commands; no callback mutex. |
 | MIDI | CoreMIDI implementation despite README saying no MIDI | Linux ALSA sequencer input added; current control-thread polling is an MVP limitation. |
 | Session/save | Human-readable `.light` parser and instrument serialization; docs disagree | Keep as reference for future validated importer; do not claim compatibility. Current new format is `.eco.json` v1. |
-| UI | raylib, extensive 8×8 grid/instrument panels; shared-state assumptions | Not imported into the running host. Retain native Qt shell; port interactions after backend/model stabilization. |
+| UI | raylib, extensive 8×8 grid/instrument panels; shared-state assumptions | Not imported into the running host. Retain native Qt shell; port interactions after backend/model stabilization. Port order, screen map and invariants are specified in docs/UI.md (§U4: TB-303/FM6/drum editors, 8×8 launcher). |
 | Bundled dependencies | Repo actually includes miniaudio, ARM macOS raylib libraries, objects and executable | No binaries or third-party library copies imported. Source-built dependencies come from Yocto recipes. |
 
 This is a source-level component integration, not a Git history merge. The original
@@ -30,6 +30,7 @@ PipeWire and other distributed packages retain their own licenses.
    asset paths and missing-sample reporting. Preserve existing `.light` files.
 4. Reintroduce the original 8×8 workflow and instrument parameters through
    commands and atomic/snapshot telemetry, never direct RT-state access.
+   Sequencing and screen designs: docs/UI.md §U4.
 5. Test original LIGHT sessions against golden rendered references. The 48 kHz
    port intentionally differs from original 44.1 kHz rendering; compare timing,
    pitch and envelope duration, not bit identity between sample rates.

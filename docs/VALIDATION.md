@@ -32,6 +32,9 @@ Environment: Apple Silicon macOS, Apple Clang, 2026-09-21/22.
 ## Not executed / still required
 
 - Full native Qt/PipeWire/ALSA compilation and GUI runtime on Linux.
+- UI-specific coverage (QML component tests, offscreen rendering, touch layouts).
+  The current UI is a single-file developer preview; its test strategy depends
+  on the view-model/platform split planned in docs/UI.md §U1.
 - Native project save/load round-trip integration tests (Qt dependency required).
 - BitBake parse, dependency compilation, image generation or SDK generation.
 - Any x86-64, Pi, Qualcomm or ARMv7 target execution. Scalar tests here run on

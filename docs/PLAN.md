@@ -123,6 +123,11 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
 5. Add project model serialization tests on Linux and then `.light` import with
    relative assets. Add sample ownership/reclamation without callback frees.
 6. Integrate plugins only after audio continuity, RT behavior and persistence pass.
+7. UI work is planned and sequenced in docs/UI.md. First item (U1.1, not gated on
+   hardware): split `Controller` behind platform interfaces with a mock backend so
+   QML can be iterated and tested on the macOS/Linux dev host without
+   PipeWire/ALSA. UI additions follow the milestone dependencies listed there,
+   not ad-hoc.
 
 ## Research basis
 

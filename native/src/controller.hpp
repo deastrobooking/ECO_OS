@@ -118,11 +118,20 @@ class Controller : public QObject {
             midi = nullptr;
         // The timer now only drives UI refresh (playhead/status); MIDI input
         // no longer depends on it.
-        connect(&timer, &QTimer::timeout, this, [this] { emit tick(); });
+        connect(&timer, &QTimer::timeout, this, [this] {
+            // A SwapPlugin the audio thread just applied hands back the
+            // previously installed plugin here for the control thread to
+            // free; the audio thread must not allocate or free memory.
+            if (auto *old = engine.retiredPlugin.exchange(nullptr, std::memory_order_acquire))
+                delete old;
+            emit tick();
+        });
         timer.start(33);
     }
     ~Controller() {
         timer.stop();
+        if (auto *old = engine.retiredPlugin.exchange(nullptr, std::memory_order_acquire))
+            delete old;
         for (auto *notifier : midiNotifiers)
             delete notifier;
         if (midi)
@@ -270,6 +279,46 @@ class Controller : public QObject {
         if (!update())
             project.tracks[t].mute = !project.tracks[t].mute;
         emit changed();
+    }
+    // Loads a CLAP instrument (its first plugin, by factory index) as an
+    // independent "seventh track" mixed alongside the 6-track sequencer, not
+    // part of it. dlopen/instantiate/activate happen here on the control
+    // thread; only the resulting ClapHost pointer crosses to the audio
+    // thread, via a SwapPlugin command.
+    Q_INVOKABLE void loadPlugin(const QString &path) {
+        auto host = std::make_unique<eco::ClapHost>();
+        if (!host->load(path.toStdString(), eco::SampleRate)) {
+            message_ = "Failed to load CLAP plugin: " + path;
+            emit changed();
+            return;
+        }
+        eco::Command c;
+        c.action = eco::Action::SwapPlugin;
+        c.plugin = host.release();
+        if (send(c)) {
+            message_ = "Loaded CLAP plugin: " + path;
+        } else {
+            delete c.plugin; // queue was full; command never reached Engine.
+            message_ = "Command queue busy; try again.";
+        }
+        emit changed();
+    }
+    Q_INVOKABLE void auditionPlugin(int pitch = 60, double velocity = .8) {
+        if (!std::isfinite(velocity))
+            return;
+        eco::Command c;
+        c.action = eco::Action::Audition;
+        c.track = int(eco::Tracks);
+        c.pitch = std::clamp(pitch, 0, 127);
+        c.velocity = std::clamp(velocity, 0., 1.);
+        send(c);
+    }
+    Q_INVOKABLE void releasePluginNote(int pitch) {
+        eco::Command c;
+        c.action = eco::Action::NoteOff;
+        c.track = int(eco::Tracks);
+        c.pitch = pitch;
+        send(c);
     }
     Q_INVOKABLE void audition(int pitch = 60, double velocity = .8) {
         if (!std::isfinite(velocity))

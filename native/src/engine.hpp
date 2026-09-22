@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include "clap_host.hpp"
 #include "instruments.hpp"
 #include <algorithm>
 #include <array>
@@ -10,6 +11,7 @@
 
 namespace eco {
 constexpr unsigned Tracks = 6, Scenes = 4, Steps = 16;
+constexpr unsigned SampleRate = 48000;
 struct Note {
     int pitch = 60;
     float velocity = 0;
@@ -74,7 +76,7 @@ template <class T, std::size_t N> class Queue {
         return true;
     }
 };
-enum class Action { Update, Start, Stop, Launch, Audition, NoteOff, Restore };
+enum class Action { Update, Start, Stop, Launch, Audition, NoteOff, Restore, SwapPlugin };
 struct Command {
     Action action = Action::Stop;
     Project project{};
@@ -86,6 +88,11 @@ struct Command {
     // A default of 0 applies at the start of the block, matching prior
     // behavior for callers that don't set it.
     unsigned frameOffset = 0;
+    // SwapPlugin only: a loaded ClapHost, already activated on the control
+    // thread. Ownership transfers to Engine; the previously installed host
+    // (if any) comes back via Engine::retiredPlugin for the control thread
+    // to delete.
+    ClapHost *plugin = nullptr;
 };
 class Engine {
     LightInstruments instruments;
@@ -95,9 +102,14 @@ class Engine {
     std::array<int, Tracks> active{}, pending{-1, -1, -1, -1, -1, -1};
     double nextStep = 0;
     uint64_t frame = 0;
-    static constexpr unsigned rate = 48000;
+    static constexpr unsigned rate = SampleRate;
     int step = -1;
     bool playing = false;
+    // Audio-thread owned once installed via SwapPlugin; the "seventh track"
+    // (Command::track == Tracks) auditioned independently of the 6-track
+    // step sequencer. Deleted by ~Engine(), which only runs once the audio
+    // callback has stopped (Controller destructs Audio before Engine).
+    ClapHost *pluginHost = nullptr;
     void trigger(int track, int pitch, float velocity) noexcept {
         if (track < 0 || track >= int(Tracks))
             return;
@@ -108,7 +120,17 @@ class Engine {
     Queue<Command, 32> commands;
     std::atomic<int> currentStep{-1};
     std::atomic<unsigned> activeClips{0};
+    // Set by render() when SwapPlugin replaces an already-installed plugin.
+    // The control thread must exchange this back to nullptr and delete what
+    // it finds; render() will refuse a second swap until this is drained, so
+    // that it never has to free memory itself.
+    std::atomic<ClapHost *> retiredPlugin{nullptr};
     Engine() = default;
+    ~Engine() {
+        delete pluginHost;
+    }
+    Engine(const Engine &) = delete;
+    Engine &operator=(const Engine &) = delete;
     void render(float *output, std::size_t frames) noexcept {
         Command cmd;
         // Audition/NoteOff carry a sample offset and are applied mid-block,
@@ -158,13 +180,34 @@ class Engine {
                     frames > 0 ? std::min<unsigned>(cmd.frameOffset, unsigned(frames) - 1) : 0;
                 timed[timedCount++] = cmd;
                 break;
+            case Action::SwapPlugin: {
+                ClapHost *old = pluginHost;
+                pluginHost = cmd.plugin;
+                // SwapPlugin is a rare control-thread action (loading a
+                // plugin), not a per-block one; if the control thread hasn't
+                // yet collected the previous retiree this drops it rather
+                // than freeing it here, since the audio thread must not
+                // allocate or free.
+                if (old && retiredPlugin.load(std::memory_order_relaxed) == nullptr)
+                    retiredPlugin.store(old, std::memory_order_release);
+                break;
+            }
             }
         const bool solo = std::any_of(project.tracks.begin(), project.tracks.end(),
                                       [](auto &t) { return t.solo; });
         for (std::size_t n = 0; n < frames; n++) {
             for (unsigned i = 0; i < timedCount; i++)
                 if (timed[i].frameOffset == n) {
-                    if (timed[i].action == Action::Audition)
+                    if (timed[i].track == int(Tracks)) {
+                        // The CLAP plugin bus: not part of the 6-track step
+                        // sequencer, addressed by the sentinel track index.
+                        if (pluginHost) {
+                            if (timed[i].action == Action::Audition)
+                                pluginHost->noteOn(timed[i].pitch, timed[i].velocity, unsigned(n));
+                            else
+                                pluginHost->noteOff(timed[i].pitch, unsigned(n));
+                        }
+                    } else if (timed[i].action == Action::Audition)
                         trigger(timed[i].track, timed[i].pitch, timed[i].velocity);
                     else
                         instruments.noteOff(timed[i].track, timed[i].pitch);
@@ -198,6 +241,11 @@ class Engine {
             if (playing)
                 frame++;
         }
+        // Mixed in after the per-sample loop, at block rate rather than the
+        // per-sample master smoothing above: a CLAP plugin renders its own
+        // block internally, so its gain can only be applied once per call.
+        if (pluginHost)
+            pluginHost->process(output, static_cast<uint32_t>(frames), master * .5f);
         soft_clip_neon(output, static_cast<uint32_t>(frames), 1.f);
         unsigned clips = 0;
         for (unsigned i = 0; i < Tracks; i++)
