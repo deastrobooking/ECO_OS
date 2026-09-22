@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "audio.hpp"
+#include "project_io.hpp"
+#include <QByteArray>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QObject>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -269,39 +268,15 @@ class Controller : public QObject {
         }
     }
     Q_INVOKABLE void save() {
-        QJsonArray tracks;
+        eco::SavedProject saved;
+        saved.project = project;
         const auto act = active();
-        const QStringList types = {"kick", "snare", "hat", "bass", "keys", "pluck"};
-        const QStringList names = {"Kick", "Snare", "Hi-hats", "Sub bass", "Soft keys", "Glass"};
-        for (int t = 0; t < 6; t++) {
-            QJsonArray clips;
-            for (auto &c : project.tracks[t].clips) {
-                QJsonArray notes;
-                for (auto &n : c) {
-                    if (n.velocity > 0)
-                        notes.append(QJsonObject{{"note", n.pitch}, {"velocity", n.velocity}});
-                    else
-                        notes.append(QJsonValue::Null);
-                }
-                clips.append(notes);
-            }
-            const auto &tr = project.tracks[t];
-            tracks.append(QJsonObject{{"name", names[t]},
-                                      {"type", types[t]},
-                                      {"volume", tr.volume},
-                                      {"mute", tr.mute},
-                                      {"solo", tr.solo},
-                                      {"active", act[t].toInt()},
-                                      {"patterns", clips}});
-        }
-        QJsonObject root{{"version", 1},
-                         {"name", name_},
-                         {"bpm", project.bpm},
-                         {"master", project.master},
-                         {"tracks", tracks}};
+        for (int t = 0; t < 6; t++)
+            saved.active[t] = act[t].toInt();
+        saved.name = name_.toStdString();
+        const auto bytes = QByteArray::fromStdString(eco::toJson(saved));
         QDir().mkpath(QFileInfo(path()).absolutePath());
         QSaveFile file(path());
-        const auto bytes = QJsonDocument(root).toJson();
         const bool ok =
             file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
         message_ = ok ? "Saved " + path() : "Save failed: " + file.errorString();
@@ -319,53 +294,8 @@ class Controller : public QObject {
             emit changed();
             return;
         }
-        QJsonParseError error;
-        const auto doc = QJsonDocument::fromJson(file.readAll(), &error);
-        const auto root = doc.object();
-        auto number = [](QJsonValue v, double lo, double hi) {
-            return v.isDouble() && std::isfinite(v.toDouble()) && v.toDouble() >= lo &&
-                   v.toDouble() <= hi;
-        };
-        bool valid = error.error == QJsonParseError::NoError && root["version"].toInt() == 1 &&
-                     root["name"].isString() && root["name"].toString().size() <= 80 &&
-                     number(root["bpm"], 40, 240) && number(root["master"], 0, 1) &&
-                     root["tracks"].isArray();
-        auto next = project;
-        next.bpm = root["bpm"].toDouble();
-        next.master = root["master"].toDouble();
-        const auto tracks = root["tracks"].toArray();
-        valid &= tracks.size() == 6;
-        std::array<int, 6> clips{};
-        const QStringList types = {"kick", "snare", "hat", "bass", "keys", "pluck"};
-        for (int t = 0; t < 6 && valid; t++) {
-            const auto tr = tracks[t].toObject();
-            const auto patterns = tr["patterns"].toArray();
-            valid = patterns.size() == 4 && tr["type"].toString() == types[t] &&
-                    tr["mute"].isBool() && tr["solo"].isBool() && number(tr["volume"], 0, 1) &&
-                    number(tr["active"], 0, 3) && tr["active"].toDouble() == tr["active"].toInt();
-            next.tracks[t].volume = tr["volume"].toDouble();
-            next.tracks[t].mute = tr["mute"].toBool();
-            next.tracks[t].solo = tr["solo"].toBool();
-            clips[t] = tr["active"].toInt();
-            for (int c = 0; c < 4 && valid; c++) {
-                const auto notes = patterns[c].toArray();
-                valid = notes.size() == 16;
-                for (int s = 0; s < 16 && valid; s++) {
-                    const auto v = notes[s];
-                    if (v.isNull()) {
-                        next.tracks[t].clips[c][s].velocity = 0;
-                        continue;
-                    }
-                    const auto n = v.toObject();
-                    valid = v.isObject() && number(n["note"], 24, 96) &&
-                            n["note"].toInt() == n["note"].toDouble() &&
-                            number(n["velocity"], 0, 1);
-                    next.tracks[t].clips[c][s] = {n["note"].toInt(),
-                                                  float(n["velocity"].toDouble())};
-                }
-            }
-        }
-        if (!valid) {
+        eco::SavedProject loaded;
+        if (!eco::fromJson(file.readAll().toStdString(), loaded)) {
             message_ = "Invalid ECO v1 project; current session retained.";
             emit changed();
             return;
@@ -373,15 +303,15 @@ class Controller : public QObject {
         // Replace project, transport and clip selection in one bounded command.
         eco::Command restore;
         restore.action = eco::Action::Restore;
-        restore.project = next;
-        restore.active = clips;
+        restore.project = loaded.project;
+        restore.active = loaded.active;
         if (!send(restore))
             return;
-        project = next;
+        project = loaded.project;
         playing_ = false;
-        name_ = root["name"].toString();
+        name_ = QString::fromStdString(loaded.name);
         selected_ = 0;
-        scene_ = clips[0];
+        scene_ = loaded.active[0];
         message_ = "Loaded " + path();
         emit changed();
     }

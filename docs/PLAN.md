@@ -17,7 +17,7 @@ LIGHT. No browser app. New code and owned LIGHT source use MIT by explicit choic
 | Init | systemd | Supervised services, per-process limits, diagnostics and restart behavior. |
 | Display | Weston kiosk / Wayland + Qt Quick | Native touch-capable interface, C++ integration; no desktop shell. |
 | Audio | PipeWire + WirePlumber + ALSA | Native PipeWire stream; JACK, ALSA and Pulse compatibility packages. One owned audio session. |
-| DSP | LIGHT C11 instruments + C++20 host | Preserve useful synthesis; bounded commands; audio-thread ownership. Rust ownership-boundary experiment before any migration; see RUST-DECISION.md. |
+| DSP | LIGHT C11 instruments + C++20 host | Preserve useful synthesis; bounded commands; audio-thread ownership. |
 | SIMD | LIGHT AArch64 NEON + scalar reference | Source-portable fallback on x86/ARMv7. Add optional AVX2 or ARMv7 NEON only behind equivalence tests and CPU dispatch. |
 | MIDI | ALSA sequencer | USB controller input; current polling/capture is coarse and needs a timestamped event path. |
 | Projects | Versioned JSON + Qt QSaveFile | Strictly validated, atomically replaced local file. No database in the callback. |
@@ -127,5 +127,3 @@ Primary sources reviewed during implementation:
 - [CLAP](https://github.com/free-audio/clap), [LV2](https://lv2plug.in/), [VST3 SDK](https://github.com/steinbergmedia/vst3sdk): native plugin roadmap. Not currently hosted.
 - [RAUC](https://rauc.readthedocs.io/en/latest/basic.html): future signed update/slot integration.
 - [Arduino MIDIUSB](https://github.com/arduino-libraries/MIDIUSB): native USB MIDI controller firmware.
-
-Language migration assessment: [RUST-DECISION.md](RUST-DECISION.md).

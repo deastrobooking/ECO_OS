@@ -23,8 +23,7 @@ boot and latency qualification still need a Linux build host and target boards.
 
 Read the [game plan](docs/PLAN.md), [build guide](docs/BUILD.md),
 [LIGHT integration audit](docs/LIGHT-INTEGRATION.md), and
-[hardware acceptance checklist](docs/HARDWARE.md), and
-[Rust migration assessment](docs/RUST-DECISION.md).
+[hardware acceptance checklist](docs/HARDWARE.md).
 
 ## Run the portable engine today
 

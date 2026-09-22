@@ -15,3 +15,6 @@ done
 "${CXX:-c++}" -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -I native/src -I native/light native/tests/engine_test.cpp "$out"/*.o -o "$out/engine-tests"
 "$out/engine-tests"
+"${CXX:-c++}" -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -I native/src -I native/light native/tests/project_io_test.cpp -o "$out/project-io-tests"
+"$out/project-io-tests"
