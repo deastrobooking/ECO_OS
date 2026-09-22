@@ -1,0 +1,30 @@
+[Unit]
+Description=ECO music workstation session
+Requires=weston.service
+After=weston.service sound.target dbus.service
+PartOf=weston.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+SupplementaryGroups=audio video render input wayland
+Environment=HOME=/home/weston
+Environment=XDG_RUNTIME_DIR=/run/eco
+Environment=PIPEWIRE_RUNTIME_DIR=/run/eco
+Environment=WAYLAND_DISPLAY=/run/wayland-0
+Environment=QT_QPA_PLATFORM=wayland
+RuntimeDirectory=eco
+RuntimeDirectoryMode=0700
+WorkingDirectory=/home/weston
+ExecStart=/usr/bin/dbus-run-session -- /usr/libexec/eco-session
+Restart=on-failure
+RestartSec=3
+LimitRTPRIO=88
+LimitMEMLOCK=infinity
+UMask=0077
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/deastrobooking/LIGHT",
+  "commit": "15f08cae2ea297c8906ffc2cd37bf5e4aa62c693",
+  "original_sha256": {
+    "fm_synth.c": "7bc3f3c8f87ebdbccb66be55f5b6793f8f0584a3afef4ee1c420829fde6246fe",
+    "fm_synth.h": "28c0bae8e88ce089ea6337f1491594f738df5a2dcc2b8688fa54eb79651374aa",
+    "tb303.c": "ec0c88322fc5c3da0701ce53e9e472b5bc10e21603a1cf63b68e798ee7d3048c",
+    "tb303.h": "b1b62673ea6e3856ab9d53295b01c0e401b87434c51e48eaeeb9156e10554bc1",
+    "drum_rack.c": "4f0bfd6fb0e336a7a4a74dff5d440153fd7bc1a0638bc28b4581621dc7ffb0f3",
+    "drum_rack.h": "444957b35161195d378d27b9c5714c2d89015e20daeb6e355280a74d0fd831c7",
+    "mix_neon.s": "c6ea24410f9c44bfb4e91248b74174cb650f9243a1ad26f945fbebb029ec7247",
+    "mix_neon.h": "a886369b5f36589c96417408fe2fe4079d8a1cf623e0693c56a8f5ae1dd01e85"
+  }
+}

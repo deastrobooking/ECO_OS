@@ -1,0 +1,5 @@
+header:
+  version: 14
+  includes:
+    - yocto/kas/rpi-base.yml
+machine: raspberrypi4-64

@@ -1,0 +1,10 @@
+.DS_Store
+build/
+build-*/
+layers/
+downloads/
+sstate-cache/
+.venv/
+__pycache__/
+*.wav
+*.eco.json

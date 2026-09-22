@@ -1,0 +1,10 @@
+SUMMARY = "ECO native clip workstation"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://../LICENSE;md5=6f66b87b4697de4f2e4ea02b091e4ea3"
+FILESEXTRAPATHS:prepend := "${ECO_ROOT}:"
+SRC_URI = "file://native file://LICENSE"
+S = "${WORKDIR}/native"
+inherit qt6-cmake pkgconfig
+DEPENDS = "qtbase qtdeclarative pipewire alsa-lib"
+RDEPENDS:${PN} += "qtdeclarative-qmlplugins qtwayland-plugins"
+EXTRA_OECMAKE += "-DBUILD_TESTING=OFF"

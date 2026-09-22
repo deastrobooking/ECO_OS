@@ -1,0 +1,29 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+set -eu
+pids=()
+cleanup() {
+    trap - EXIT TERM INT
+    if ((${#pids[@]})); then
+        kill "${pids[@]}" 2>/dev/null || true
+        wait "${pids[@]}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT TERM INT
+pipewire &
+pids+=("$!")
+for ((attempt=0; attempt<100; attempt++)); do
+    [[ -S "$XDG_RUNTIME_DIR/pipewire-0" ]] && break
+    kill -0 "${pids[0]}"
+    sleep 0.05
+done
+[[ -S "$XDG_RUNTIME_DIR/pipewire-0" ]]
+wireplumber &
+pids+=("$!")
+pipewire-pulse &
+pids+=("$!")
+eco-workstation &
+pids+=("$!")
+# Restart the entire owned session if any member exits.
+wait -n "${pids[@]}" || true
+exit 1

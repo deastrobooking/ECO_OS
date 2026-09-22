@@ -1,0 +1,42 @@
+header:
+  version: 14
+
+distro: eco
+target: eco-image-dev
+repos:
+  eco:
+    layers:
+      yocto/meta-eco-core:
+      yocto/meta-eco-bsp:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    path: layers/poky
+    commit: cbd62bb2a9f2ab3466a0f72f4289bc86ca20a019
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+  meta-openembedded:
+    url: https://github.com/openembedded/meta-openembedded.git
+    path: layers/meta-openembedded
+    commit: b5874ea07d69919d9b40d59f2c2f0bbd24bc3259
+    layers:
+      meta-oe:
+      meta-python:
+      meta-multimedia:
+  meta-qt6:
+    url: https://code.qt.io/yocto/meta-qt6.git
+    path: layers/meta-qt6
+    commit: 00c3bd954341a2a755fdee6b978af952f51793e7
+local_conf_header:
+  eco: |
+    CONF_VERSION = "2"
+    PATCHRESOLVE = "noop"
+    PACKAGE_CLASSES = "package_ipk"
+    QT_EDITION = "opensource"
+    QT_COMMERCIAL_MODULES = "0"
+    QT_GIT_PROTOCOL = "https"
+    BB_NUMBER_THREADS ?= "8"
+    PARALLEL_MAKE ?= "-j8"
+    INHERIT += "buildhistory"
+    BUILDHISTORY_COMMIT = "0"

@@ -1,0 +1,14 @@
+header:
+  version: 14
+  includes:
+    - yocto/kas/base.yml
+repos:
+  meta-raspberrypi:
+    url: https://github.com/agherzan/meta-raspberrypi.git
+    path: layers/meta-raspberrypi
+    commit: 6ca1f75017cc5d5acdb8bb05634c4bc01fa049fd
+local_conf_header:
+  raspberrypi: |
+    ENABLE_UART = "1"
+    RPI_USE_U_BOOT = "0"
+    IMAGE_FSTYPES = "wic.bz2 wic.bmap"

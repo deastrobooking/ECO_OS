@@ -1,0 +1,8 @@
+header:
+  version: 14
+  includes:
+    - yocto/kas/base.yml
+machine: genericx86-64
+local_conf_header:
+  x86: |
+    IMAGE_FSTYPES = "wic wic.bmap"

@@ -1,0 +1,12 @@
+# Experimental baseline for boards listed by this pinned BSP.
+# NOT an ASUS QN10 / Snapdragon X or X2 qualification image.
+header:
+  version: 14
+  includes:
+    - yocto/kas/base.yml
+machine: qcom-armv8a
+repos:
+  meta-qcom:
+    url: https://github.com/qualcomm-linux/meta-qcom.git
+    path: layers/meta-qcom
+    commit: ec80a36bce11d8182b4bb2a6fa0359adfeccde0a

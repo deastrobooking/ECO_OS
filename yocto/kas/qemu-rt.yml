@@ -1,0 +1,9 @@
+# RT is qualified separately; do not apply this QEMU kernel provider to Pi BSPs.
+header:
+  version: 14
+  includes:
+    - yocto/kas/qemu-x86-64.yml
+local_conf_header:
+  realtime: |
+    PREFERRED_PROVIDER_virtual/kernel = "linux-yocto-rt"
+    PREFERRED_VERSION_linux-yocto-rt = "6.6%"

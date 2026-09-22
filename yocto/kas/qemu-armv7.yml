@@ -1,0 +1,9 @@
+# Emulated 32-bit application portability; not a physical-board support claim.
+header:
+  version: 14
+  includes:
+    - yocto/kas/base.yml
+machine: qemuarm
+local_conf_header:
+  qemu: |
+    IMAGE_FSTYPES = "ext4"

@@ -1,0 +1,8 @@
+header:
+  version: 14
+  includes:
+    - yocto/kas/base.yml
+machine: qemuarm64
+local_conf_header:
+  qemu: |
+    IMAGE_FSTYPES = "ext4"
