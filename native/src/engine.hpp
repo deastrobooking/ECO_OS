@@ -12,14 +12,31 @@
 namespace eco {
 constexpr unsigned Tracks = 6, Scenes = 4, Steps = 16;
 constexpr unsigned SampleRate = 48000;
+constexpr unsigned TicksPerQuarter = 960;
+constexpr unsigned TicksPerStep = TicksPerQuarter / 4;
+constexpr unsigned DefaultClipTicks = Steps * TicksPerStep;
+constexpr unsigned MaxClipNotes = 128;
 struct Note {
     int pitch = 60;
     float velocity = 0;
+};
+struct MidiNote {
+    uint16_t startTick = 0, durationTicks = TicksPerStep;
+    uint8_t pitch = 60, channel = 0;
+    float velocity = 0.8f;
+};
+struct MidiClip {
+    uint16_t loopTicks = DefaultClipTicks;
+    uint16_t noteCount = 0;
+    std::array<MidiNote, MaxClipNotes> notes{};
 };
 struct Track {
     float volume = .5f;
     bool mute = false, solo = false;
     std::array<std::array<Note, Steps>, Scenes> clips{};
+    // Fixed-capacity MIDI event data keeps project snapshots bounded and safe
+    // to pass through the audio command queue without callback allocations.
+    std::array<MidiClip, Scenes> midiClips{};
 };
 struct Project {
     float bpm = 112, master = .7f;
@@ -76,7 +93,7 @@ template <class T, std::size_t N> class Queue {
         return true;
     }
 };
-enum class Action { Update, Start, Stop, Launch, Audition, NoteOff, Restore, SwapPlugin };
+enum class Action { Update, Start, Stop, Launch, Audition, MidiInput, NoteOff, Restore, SwapPlugin };
 struct Command {
     Action action = Action::Stop;
     Project project{};
@@ -94,6 +111,12 @@ struct Command {
     // to delete.
     ClapHost *plugin = nullptr;
 };
+struct TimedCommand {
+    Action action = Action::Stop;
+    int track = 0, pitch = 60;
+    float velocity = .8f;
+    unsigned frameOffset = 0;
+};
 class Engine {
     LightInstruments instruments;
     Project project = demo();
@@ -102,6 +125,8 @@ class Engine {
     std::array<int, Tracks> active{}, pending{-1, -1, -1, -1, -1, -1};
     double nextStep = 0;
     uint64_t frame = 0;
+    double midiTickPosition = 0;
+    uint64_t lastMidiTick = UINT64_MAX;
     static constexpr unsigned rate = SampleRate;
     int step = -1;
     bool playing = false;
@@ -119,6 +144,7 @@ class Engine {
   public:
     Queue<Command, 32> commands;
     std::atomic<int> currentStep{-1};
+    std::atomic<uint64_t> transportTick{0};
     std::atomic<unsigned> activeClips{0};
     // Set by render() when SwapPlugin replaces an already-installed plugin.
     // The control thread must exchange this back to nullptr and delete what
@@ -135,7 +161,7 @@ class Engine {
         Command cmd;
         // Audition/NoteOff carry a sample offset and are applied mid-block,
         // at the exact frame they target, instead of all at the block start.
-        std::array<Command, 31> timed{};
+        std::array<TimedCommand, 31> timed{};
         unsigned timedCount = 0;
         for (unsigned count = 0; count < 31 && commands.pop(cmd); count++)
             switch (cmd.action) {
@@ -149,6 +175,8 @@ class Engine {
                 step = -1;
                 frame = 0;
                 nextStep = 0;
+                midiTickPosition = 0;
+                lastMidiTick = UINT64_MAX;
                 break;
             case Action::Update:
                 project = cmd.project;
@@ -158,6 +186,8 @@ class Engine {
                 step = -1;
                 frame = 0;
                 nextStep = 0;
+                midiTickPosition = 0;
+                lastMidiTick = UINT64_MAX;
                 break;
             case Action::Stop:
                 playing = false;
@@ -175,10 +205,12 @@ class Engine {
                 }
                 break;
             case Action::Audition:
+            case Action::MidiInput:
             case Action::NoteOff:
                 cmd.frameOffset =
                     frames > 0 ? std::min<unsigned>(cmd.frameOffset, unsigned(frames) - 1) : 0;
-                timed[timedCount++] = cmd;
+                timed[timedCount++] = {cmd.action, cmd.track, cmd.pitch, cmd.velocity,
+                                       cmd.frameOffset};
                 break;
             case Action::SwapPlugin: {
                 ClapHost *old = pluginHost;
@@ -202,12 +234,16 @@ class Engine {
                         // The CLAP plugin bus: not part of the 6-track step
                         // sequencer, addressed by the sentinel track index.
                         if (pluginHost) {
-                            if (timed[i].action == Action::Audition)
+                            if (timed[i].action == Action::Audition ||
+                                timed[i].action == Action::MidiInput)
                                 pluginHost->noteOn(timed[i].pitch, timed[i].velocity, unsigned(n));
                             else
                                 pluginHost->noteOff(timed[i].pitch, unsigned(n));
                         }
-                    } else if (timed[i].action == Action::Audition)
+                    } else if (timed[i].action == Action::MidiInput)
+                        instruments.midiNoteOn(timed[i].track, timed[i].pitch,
+                                               timed[i].velocity);
+                    else if (timed[i].action == Action::Audition)
                         trigger(timed[i].track, timed[i].pitch, timed[i].velocity);
                     else
                         instruments.noteOff(timed[i].track, timed[i].pitch);
@@ -217,15 +253,49 @@ class Engine {
                 if (step == 0)
                     for (unsigned i = 0; i < Tracks; i++)
                         if (pending[i] >= 0) {
+                            instruments.allNotesOff(i);
                             active[i] = pending[i];
                             pending[i] = -1;
                         }
                 for (unsigned i = 0; i < Tracks; i++) {
-                    const auto &note = project.tracks[i].clips[active[i]][step];
-                    if (note.velocity > 0)
-                        trigger(i, note.pitch, note.velocity);
+                    const auto &track = project.tracks[i];
+                    const auto &legacy = track.clips[active[i]][step];
+                    const auto &midi = track.midiClips[active[i]];
+                    if (midi.noteCount == 0 && legacy.velocity > 0)
+                        trigger(i, legacy.pitch, legacy.velocity);
                 }
                 nextStep += rate * 60.0 / std::clamp(project.bpm, 40.f, 240.f) / 4;
+            }
+            if (playing) {
+                const auto tick = static_cast<uint64_t>(midiTickPosition);
+                if (tick != lastMidiTick) {
+                    lastMidiTick = tick;
+                    // Release first so a repeated pitch can retrigger cleanly
+                    // when one note ends on the same tick another begins.
+                    for (unsigned i = 0; i < Tracks; i++) {
+                        const auto &clip = project.tracks[i].midiClips[active[i]];
+                        if (clip.loopTicks == 0)
+                            continue;
+                        const auto clipTick = unsigned(tick % clip.loopTicks);
+                        for (unsigned j = 0; j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
+                            const auto &note = clip.notes[j];
+                            if ((unsigned(note.startTick) + note.durationTicks) % clip.loopTicks ==
+                                clipTick)
+                                instruments.noteOff(i, note.pitch);
+                        }
+                    }
+                    for (unsigned i = 0; i < Tracks; i++) {
+                        const auto &clip = project.tracks[i].midiClips[active[i]];
+                        if (clip.loopTicks == 0)
+                            continue;
+                        const auto clipTick = unsigned(tick % clip.loopTicks);
+                        for (unsigned j = 0; j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
+                            const auto &note = clip.notes[j];
+                            if (note.startTick == clipTick)
+                                instruments.midiNoteOn(i, note.pitch, note.velocity);
+                        }
+                    }
+                }
             }
             master += (std::clamp(project.master, 0.f, 1.f) - master) * .002f;
             for (unsigned i = 0; i < Tracks; i++) {
@@ -240,6 +310,8 @@ class Engine {
             output[n * 2 + 1] = sample[1] * master * .5f;
             if (playing)
                 frame++;
+            if (playing)
+                midiTickPosition += double(project.bpm) * TicksPerQuarter / (60.0 * rate);
         }
         // Mixed in after the per-sample loop, at block rate rather than the
         // per-sample master smoothing above: a CLAP plugin renders its own
@@ -252,6 +324,9 @@ class Engine {
             clips |= unsigned(active[i]) << (i * 2);
         activeClips.store(clips, std::memory_order_relaxed);
         currentStep.store(step, std::memory_order_relaxed);
+        transportTick.store(
+            playing ? static_cast<uint64_t>(midiTickPosition) : 0,
+            std::memory_order_relaxed);
     }
 };
 } // namespace eco

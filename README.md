@@ -14,14 +14,15 @@ boot and latency qualification still need a Linux build host and target boards.
 - LIGHT FM6, TB-303 and drum synthesis, integrated into a bounded-command native
   audio engine at 48 kHz. ARM64 NEON mixer plus scalar fallback.
 - A fullscreen Qt Quick workstation: six tracks, four clip scenes, sixteen-step
-  patterns, bar-quantized launches, levels/mutes, ALSA MIDI, step capture, atomic
-  project save/reload. Built-in sounds work without external samples/plugins.
+  patterns, bar-quantized launches, levels/mutes, ALSA MIDI, polyphonic note
+  capture with tick-based duration, atomic project save/reload. The editor is
+  still step-based. Built-in sounds need no external samples/plugins.
 - Architecture-neutral `meta-eco-core`, hardware integration `meta-eco-bsp`,
   pinned kas manifests for x86-64, Pi 4/5, QEMU ARM64/ARMv7 and experimental QCOM.
 - Weston kiosk and supervised PipeWire/WirePlumber/application services.
 - Leonardo/Micro USB MIDI controller starter firmware.
 
-Read the [game plan](docs/PLAN.md), [UI master document](docs/UI.md),
+Read the [product roadmap](docs/ROADMAP.md), [implementation plan](docs/PLAN.md), [UI master document](docs/UI.md),
 [build guide](docs/BUILD.md), [LIGHT integration audit](docs/LIGHT-INTEGRATION.md), and
 [hardware acceptance checklist](docs/HARDWARE.md).
 

@@ -154,10 +154,11 @@ it visualizes.
    audio-device failure, on missing/corrupt project (validation already
    rejects bad files; the UI must explain it).
 
-### U3 — Clip editor v2 (targets M3–M4, needs model work first)
+### U3 — Clip editor v2 (targets M3–M4, needs note-event editor work)
 
 9. **Velocity lane + per-step pitch** under the step row; depends on project
-   model v2 (note duration/polyphony — [PLAN.md](PLAN.md) backlog 3).
+   MIDI note events now store pitch, velocity, channel, start, and duration;
+   replace this step-only editor with an event-aware piano roll and velocity lane.
 10. **Sub-step playhead.** Show position within the bar using engine frame
     telemetry, not just the 16-step index; depends on the PipeWire stream
     frame-position exposure noted in [controller.hpp](../native/src/controller.hpp).

@@ -139,9 +139,11 @@ If HDMI is chosen instead of the USB interface, use `wpctl set-default NODE_ID`
 in that same user/runtime environment, then restart the stream. The current UI
 does not expose a device selector. MIDI routing is explicit: list ports with
 `aconnect -l`, then connect the controller's numeric source port to the
-`ECO Controller:Input` destination. Arm capture and play notes. Capture currently
-writes the current sixteenth step; it does not record note duration or provide
-sample-accurate live-MIDI timestamps.
+`ECO Controller:Input` destination. Arm capture and play notes. Capture stores
+polyphonic notes in the selected clip, quantizes starts to the current step,
+and measures duration from the engine tick; ALSA timestamps are not yet mapped
+to sample offsets, so this is not sample-accurate recording. The editor still
+shows a 16-step view; use the portable project event schema for note details.
 
 Default requested graph quantum is 256 at 48 kHz. Test 128/64 using a temporary
 PipeWire metadata force-quantum setting in the owned session, observe the actual

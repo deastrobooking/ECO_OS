@@ -38,6 +38,12 @@ class Controller : public QObject {
     snd_seq_t *midi = nullptr;
     std::vector<QSocketNotifier *> midiNotifiers;
     int selected_ = 0, scene_ = 0;
+    struct CapturedMidiNote {
+        bool active = false;
+        int pitch = 0, track = 0, scene = 0, channel = 0;
+        uint16_t eventIndex = 0, startTick = 0;
+    };
+    std::array<CapturedMidiNote, 16> capturedNotes{};
     bool playing_ = false, armed_ = false;
     QString message_ = "Select a clip. Make something.";
     QString name_ = "First light";
@@ -58,6 +64,86 @@ class Controller : public QObject {
         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                "/session.eco.json";
     }
+    void captureMidiOn(int pitch, int channel, float velocity) {
+        if (!armed_ || !playing_ || pitch < 0 || pitch > 127)
+            return;
+        auto &clip = project.tracks[selected_].midiClips[scene_];
+        const auto before = clip;
+        auto &stepNote = project.tracks[selected_].clips[scene_]
+                                                  [std::max(engine.currentStep.load(), 0)];
+        const auto beforeStepNote = stepNote;
+        if (clip.noteCount == 0) {
+            // Promote the existing step pattern when its first MIDI note is
+            // recorded so adopting the richer representation does not erase
+            // the rest of the clip.
+            for (unsigned s = 0; s < eco::Steps && clip.noteCount < eco::MaxClipNotes; s++) {
+                const auto &legacy = project.tracks[selected_].clips[scene_][s];
+                if (legacy.velocity > 0)
+                    clip.notes[clip.noteCount++] = {
+                        static_cast<uint16_t>((s * eco::TicksPerStep) % clip.loopTicks),
+                        static_cast<uint16_t>(std::min<unsigned>(eco::TicksPerStep,
+                                                                 clip.loopTicks - 1)),
+                        static_cast<uint8_t>(std::clamp(legacy.pitch, 0, 127)), 0,
+                        std::clamp(legacy.velocity, 0.001f, 1.f)};
+            }
+        }
+        if (clip.noteCount >= eco::MaxClipNotes) {
+            clip = before;
+            message_ = "MIDI clip is full (128 notes).";
+            emit changed();
+            return;
+        }
+        unsigned slot = capturedNotes.size();
+        for (unsigned i = 0; i < capturedNotes.size(); i++)
+            if (!capturedNotes[i].active) {
+                slot = i;
+                break;
+            }
+        if (slot == capturedNotes.size()) {
+            clip = before;
+            message_ = "MIDI capture has 16 held-note slots; release notes and try again.";
+            emit changed();
+            return;
+        }
+        const int currentStep = std::max(engine.currentStep.load(std::memory_order_relaxed), 0);
+        const auto start = static_cast<uint16_t>((currentStep * eco::TicksPerStep) %
+                                                 clip.loopTicks);
+        const auto index = clip.noteCount++;
+        clip.notes[index] = {start,
+                             static_cast<uint16_t>(std::min<unsigned>(eco::TicksPerStep,
+                                                                      clip.loopTicks - 1)),
+                             static_cast<uint8_t>(pitch), static_cast<uint8_t>(channel & 15),
+                             std::clamp(velocity, 0.001f, 1.f)};
+        const int displayPitch = std::clamp(pitch, 24, 96);
+        stepNote = {displayPitch, std::clamp(velocity, 0.001f, 1.f)};
+        if (!update()) {
+            clip = before;
+            stepNote = beforeStepNote;
+            return;
+        }
+        capturedNotes[slot] = {true, pitch, selected_, scene_, channel & 15, index, start};
+    }
+    int captureMidiOff(int pitch, int channel) {
+        for (auto it = capturedNotes.rbegin(); it != capturedNotes.rend(); ++it) {
+            if (!it->active || it->pitch != pitch || it->channel != (channel & 15))
+                continue;
+            auto &clip = project.tracks[it->track].midiClips[it->scene];
+            if (it->eventIndex < clip.noteCount) {
+                const auto oldDuration = clip.notes[it->eventIndex].durationTicks;
+                const auto end = engine.transportTick.load(std::memory_order_relaxed) %
+                                 clip.loopTicks;
+                auto duration = static_cast<unsigned>((end + clip.loopTicks - it->startTick) %
+                                                     clip.loopTicks);
+                duration = std::clamp(duration, 1u, unsigned(clip.loopTicks - 1));
+                clip.notes[it->eventIndex].durationTicks = static_cast<uint16_t>(duration);
+                if (!update())
+                    clip.notes[it->eventIndex].durationTicks = oldDuration;
+            }
+            it->active = false;
+            return it->track;
+        }
+        return selected_;
+    }
     // Commands still land at frameOffset 0 (start of the next render block):
     // Engine can schedule Audition/NoteOff mid-block, but turning an ALSA
     // event timestamp into a sample offset needs the audio stream's current
@@ -68,12 +154,21 @@ class Controller : public QObject {
         snd_seq_event_t *e = nullptr;
         for (int i = 0; i < 64 && snd_seq_event_input(midi, &e) >= 0; i++) {
             if (e->type == SND_SEQ_EVENT_NOTEON && e->data.note.velocity) {
-                audition(e->data.note.note, e->data.note.velocity / 127.0);
+                eco::Command c;
+                c.action = eco::Action::MidiInput;
+                c.track = selected_;
+                c.pitch = e->data.note.note;
+                c.velocity = e->data.note.velocity / 127.f;
+                send(c);
+                captureMidiOn(e->data.note.note, e->data.note.channel,
+                              e->data.note.velocity / 127.f);
             } else if (e->type == SND_SEQ_EVENT_NOTEOFF ||
                        (e->type == SND_SEQ_EVENT_NOTEON && !e->data.note.velocity)) {
+                const int noteTrack = captureMidiOff(e->data.note.note,
+                                                     e->data.note.channel);
                 eco::Command c;
                 c.action = eco::Action::NoteOff;
-                c.track = selected_;
+                c.track = noteTrack;
                 c.pitch = e->data.note.note;
                 send(c);
             } else if (e->type == SND_SEQ_EVENT_CONTROLLER) {
@@ -212,8 +307,8 @@ class Controller : public QObject {
     }
     Q_INVOKABLE void arm() {
         armed_ = !armed_;
-        message_ = armed_ ? "MIDI step capture armed. Play your controller while running."
-                          : "Step capture off.";
+        message_ = armed_ ? "MIDI note capture armed. Notes loop with held duration."
+                          : "MIDI capture off.";
         emit changed();
     }
     Q_INVOKABLE void select(int track, int clip) {
@@ -250,6 +345,23 @@ class Controller : public QObject {
         auto &n = project.tracks[selected_].clips[scene_][s];
         n.pitch = std::array<int, 6>{36, 38, 42, 36, 60, 72}[selected_];
         n.velocity = n.velocity > 0 ? 0 : .8f;
+        auto &midi = project.tracks[selected_].midiClips[scene_];
+        if (midi.noteCount > 0 && midi.loopTicks == eco::DefaultClipTicks) {
+            const auto tick = static_cast<uint16_t>(s * eco::TicksPerStep);
+            for (unsigned i = 0; i < midi.noteCount;) {
+                if (midi.notes[i].startTick != tick) {
+                    i++;
+                    continue;
+                }
+                for (unsigned j = i + 1; j < midi.noteCount; j++)
+                    midi.notes[j - 1] = midi.notes[j];
+                midi.noteCount--;
+            }
+            if (n.velocity > 0 && midi.noteCount < eco::MaxClipNotes)
+                midi.notes[midi.noteCount++] = {tick,
+                                                static_cast<uint16_t>(eco::TicksPerStep),
+                                                static_cast<uint8_t>(n.pitch), 0, n.velocity};
+        }
         if (!update())
             project = before;
         emit changed();
@@ -367,7 +479,7 @@ class Controller : public QObject {
         }
         eco::SavedProject loaded;
         if (!eco::fromJson(file.readAll().toStdString(), loaded)) {
-            message_ = "Invalid ECO v1 project; current session retained.";
+            message_ = "Invalid ECO project; current session retained.";
             emit changed();
             return;
         }

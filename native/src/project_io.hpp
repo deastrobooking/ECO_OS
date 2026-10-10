@@ -387,14 +387,34 @@ inline std::string toJson(const SavedProject &saved) {
             }
             out << ']';
         }
+        out << "],\"midiEvents\":[";
+        for (unsigned c = 0; c < Scenes; c++) {
+            if (c)
+                out << ',';
+            const auto &clip = tr.midiClips[c];
+            out << "{\"loopTicks\":" << clip.loopTicks << ",\"notes\":[";
+            for (unsigned i = 0; i < clip.noteCount && i < MaxClipNotes; i++) {
+                if (i)
+                    out << ',';
+                const auto &note = clip.notes[i];
+                out << "{\"start\":" << note.startTick << ",\"duration\":"
+                    << note.durationTicks << ",\"note\":" << unsigned(note.pitch)
+                    << ",\"channel\":" << unsigned(note.channel) << ",\"velocity\":";
+                writeFloat(out, note.velocity);
+                out << '}';
+            }
+            out << "]}";
+        }
         out << "]}";
     }
     out << "]}";
     return out.str();
 }
 
-// Strict ECO v1 schema validation: exact track/clip/step counts, bounded
-// numeric ranges, matching per-track type tags. Rejects anything else and
+// Strict ECO v1 validation: legacy step fields remain required, and the
+// additive midiEvents field is optional for backward compatibility. Bounded
+// event storage, numeric ranges, and matching per-track type tags are checked.
+// Rejects malformed projects and
 // leaves `out` untouched so a caller can keep its current session.
 inline bool fromJson(std::string_view text, SavedProject &out) {
     using namespace detail;
@@ -439,6 +459,7 @@ inline bool fromJson(std::string_view text, SavedProject &out) {
         const auto *soloField = trackValue.field("solo");
         const auto *activeField = trackValue.field("active");
         const auto *patternsField = trackValue.field("patterns");
+        const auto *midiEventsField = trackValue.field("midiEvents");
         const std::string *type = typeField ? typeField->string() : nullptr;
         if (!type || *type != TrackTypes[t])
             return false;
@@ -485,6 +506,45 @@ inline bool fromJson(std::string_view text, SavedProject &out) {
                     velocity <= 0)
                     return false;
                 note = {pitch, float(velocity)};
+            }
+        }
+        if (midiEventsField) {
+            const JsonArray *midiClips = midiEventsField->array();
+            if (!midiClips || midiClips->size() != Scenes)
+                return false;
+            for (unsigned c = 0; c < Scenes; c++) {
+                const auto *loopField = (*midiClips)[c].field("loopTicks");
+                const auto *notesField = (*midiClips)[c].field("notes");
+                int loopTicks = 0;
+                const JsonArray *notes = notesField ? notesField->array() : nullptr;
+                if (!loopField || !isIntegerInRange(*loopField, 2, 65535, &loopTicks) ||
+                    !notes || notes->size() > MaxClipNotes)
+                    return false;
+                auto &clip = nextTrack.midiClips[c];
+                clip.loopTicks = static_cast<uint16_t>(loopTicks);
+                clip.noteCount = static_cast<uint16_t>(notes->size());
+                for (unsigned i = 0; i < notes->size(); i++) {
+                    const auto &event = (*notes)[i];
+                    const auto *startField = event.field("start");
+                    const auto *durationField = event.field("duration");
+                    const auto *pitchField = event.field("note");
+                    const auto *channelField = event.field("channel");
+                    const auto *velocityField = event.field("velocity");
+                    int start = 0, duration = 0, pitch = 0, channel = 0;
+                    double velocity = 0;
+                    if (!startField || !isIntegerInRange(*startField, 0, loopTicks - 1, &start) ||
+                        !durationField || !isIntegerInRange(*durationField, 1, loopTicks - 1,
+                                                            &duration) ||
+                        !pitchField || !isIntegerInRange(*pitchField, 0, 127, &pitch) ||
+                        !channelField || !isIntegerInRange(*channelField, 0, 15, &channel) ||
+                        !velocityField || !isFiniteNumber(*velocityField, 0, 1, &velocity) ||
+                        velocity <= 0)
+                        return false;
+                    clip.notes[i] = {static_cast<uint16_t>(start),
+                                     static_cast<uint16_t>(duration),
+                                     static_cast<uint8_t>(pitch),
+                                     static_cast<uint8_t>(channel), float(velocity)};
+                }
             }
         }
     }

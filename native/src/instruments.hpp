@@ -55,15 +55,32 @@ class LightInstruments {
             return;
         }
         auto *synth = fm[track - 4];
-        for (auto &voice : synth->voices)
-            if (voice.gate)
-                fm6_note_off(synth, voice.midi_note);
         fm6_note_on(synth, pitch, velocity);
         releaseIn[track - 4] = 7200; // MVP clip/audition gate: 150 ms.
+    }
+    void midiNoteOn(int track, int pitch, float velocity) noexcept {
+        if (track < 0 || track >= 6)
+            return;
+        if (track < 4) {
+            noteOn(track, pitch, velocity);
+            return;
+        }
+        // Sequenced MIDI notes use their event duration and explicit note-off;
+        // they must not inherit the short audition/legacy-step release timer.
+        releaseIn[track - 4] = 0;
+        fm6_note_on(fm[track - 4], pitch, velocity);
     }
     void noteOff(int track, int pitch) noexcept {
         if (track >= 4 && track < 6)
             fm6_note_off(fm[track - 4], pitch);
+    }
+    void allNotesOff(int track) noexcept {
+        if (track < 4 || track >= 6)
+            return;
+        auto *synth = fm[track - 4];
+        for (const auto &voice : synth->voices)
+            if (voice.in_use && voice.gate)
+                fm6_note_off(synth, voice.midi_note);
     }
     void stop() noexcept {
         for (auto &pad : drums->pads)

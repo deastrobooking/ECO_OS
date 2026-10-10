@@ -1,9 +1,12 @@
 # Music OS implementation plan
 
-Decision record: 2026-09-22. User direction: **Yocto from day one**, open-source
-developer product; x86-64 hardware testing first, ARM64 a first-class architecture,
-Pi boards and future Qualcomm systems, Arduino as a controller ecosystem. Reuse
-LIGHT. No browser app. New code and owned LIGHT source use MIT by explicit choice.
+Decision record: 2026-10-10 update. User direction: low-level groovebox and DAW
+for modern x86-64 mini PCs and Raspberry Pi class systems, with MIDI and CV
+sequencing first, owned native plugins, then CLAP. The prior Yocto, x86-64-first,
+ARM64-first-class, LIGHT reuse and open-source direction remains. The current
+prototype is not yet feature-comparable with Ableton Live. See the
+[product roadmap](ROADMAP.md) for the MIDI/CV-first delivery sequence and current
+code audit; that document now governs product ordering.
 
 ## Recommended stack
 
@@ -19,7 +22,7 @@ LIGHT. No browser app. New code and owned LIGHT source use MIT by explicit choic
 | Audio | PipeWire + WirePlumber + ALSA | Native PipeWire stream; JACK, ALSA and Pulse compatibility packages. One owned audio session. |
 | DSP | LIGHT C11 instruments + C++20 host | Preserve useful synthesis; bounded commands; audio-thread ownership. |
 | SIMD | LIGHT AArch64 NEON + scalar reference | Source-portable fallback on x86/ARMv7. Add optional AVX2 or ARMv7 NEON only behind equivalence tests and CPU dispatch. |
-| MIDI | ALSA sequencer | USB controller input; current polling/capture is coarse and needs a timestamped event path. |
+| MIDI | ALSA sequencer initially | MIDI 1.0 input/output; fixed-capacity polyphonic note clips are underway, with timestamp conversion and MIDI output still pending. |
 | Projects | Versioned JSON + Qt QSaveFile | Strictly validated, atomically replaced local file. No database in the callback. |
 | Plugins | CLAP first; LV2 then VST3 | Implement later behind process isolation; each binary must match host ISA/ABI. |
 | Updates | RAUC A/B after hardware/image acceptance | Not implemented in this developer image. Needs board bootloader integration and a persistent data layout. |
@@ -34,7 +37,9 @@ flowchart TB
   PW --> DSP[Native engine + LIGHT instruments]
   UI[Qt Quick on Weston kiosk] --> Commands[Bounded command queue]
   MIDI[ALSA MIDI control path] --> Commands
+  Commands --> CV[CV/Gate device interface]
   Commands --> DSP
+  CV --> Hardware[External DAC / controller]
   DSP --> Telemetry[Atomic UI telemetry]
   Telemetry --> UI
   UI --> Projects[Validated project files / atomic save]
@@ -98,22 +103,19 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
 
 ## Immediate developer backlog
 
-1. Build the x86 image and Qt host on Linux; fix parse/package/build issues from
+1. **MIDI/CV sequencing is the product-critical next feature.** The first code
+   slice now adds fixed-capacity polyphonic note clips and tick-based playback;
+   armed MIDI capture preserves pitch, channel, velocity, and note duration,
+   with starts quantized to the active step. Next add PipeWire/ALSA timestamp
+   conversion to sample offsets, explicit MIDI output, and immutable project
+   snapshots so the growing project is not copied through the callback queue.
+   Design the CV device interface alongside this work and choose the first
+   external DAC/controller before claiming CV hardware support. Details and
+   gates are in [ROADMAP.md](ROADMAP.md).
+2. Build the x86 image and Qt host on Linux; fix parse/package/build issues from
    actual BitBake output. Record the full manifest and artifact checksums.
-2. Test the user's x86 machine with a class-compliant USB interface. Gather boot
+3. Test the user's x86 machine with a class-compliant USB interface. Gather boot
    logs, `pw-dump`, `pw-top`, ALSA/MIDI listings and exact hardware identifiers.
-3. Port MIDI to timestamped sample-offset events; current 33 ms UI polling is
-   adequate only for a functional demonstration. Preserve note duration and
-   polyphony in the project model.
-   Done: `Command::frameOffset` lets Engine schedule Audition/NoteOff at an
-   exact sample within a render block instead of only at block start, tested
-   in engine_test.cpp; Controller reads ALSA MIDI on a `QSocketNotifier` tied
-   to the sequencer fd, not the 33 ms UI timer, removing polling latency from
-   input capture. Pending: ALSA event timestamps are not yet converted to a
-   `frameOffset` (needs Audio/PipeWire to expose current stream frame
-   position — untestable without a Linux/PipeWire host); note duration and
-   true multi-note polyphony are not represented in the project model, which
-   still stores one on/off velocity per 16th-step slot per track.
 4. Split DSP into event-aligned blocks and cache coefficients. Current per-sample
    LIGHT wrappers prioritize correctness; benchmark before low-buffer claims.
    `tools/bench-render.sh` measures current per-sample throughput at
@@ -122,7 +124,11 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
    Re-run on target boards before deciding block segmentation is warranted.
 5. Add project model serialization tests on Linux and then `.light` import with
    relative assets. Add sample ownership/reclamation without callback frees.
-6. Integrate plugins only after audio continuity, RT behavior and persistence pass.
+6. Keep plugins behind sequencing/audio foundations. The current CLAP wrapper
+   is an experiment: its processing lifecycle calls currently violate CLAP's
+   audio-thread requirements, and port negotiation/state/parameters are absent.
+   Design the owned ECO plugin ABI first; make CLAP conformant after those
+   lifecycle and audio graph boundaries are in place.
 7. UI work is planned and sequenced in docs/UI.md. First item (U1.1, not gated on
    hardware): split `Controller` behind platform interfaces with a mock backend so
    QML can be iterated and tested on the macOS/Linux dev host without

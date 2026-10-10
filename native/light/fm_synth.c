@@ -268,6 +268,9 @@ void fm6_note_off(FM6Synth *fm, int midi_note) {
             vp->gate = false;
             for (int i = 0; i < FM_OPS; i++)
                 vp->op[i].env_stage = ENV_RELEASE;
+            /* One MIDI note-off releases one matching voice. Repeated notes
+             * of the same pitch may overlap and must not all be cut at once. */
+            return;
         }
     }
 }
