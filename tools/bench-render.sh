@@ -11,6 +11,10 @@ fi
 for source in native/light/*.c; do
   "${CC:-cc}" -std=c11 -O2 $neon -I native/light -c "$source" -o "$out/$(basename "$source" .c).o"
 done
+for source in native/src/devices/*.cpp; do
+  "${CXX:-c++}" -std=c++20 -O2 -Wall -Wextra -Werror -I native/src -I native/light \
+    -c "$source" -o "$out/$(basename "$source" .cpp).o"
+done
 "${CXX:-c++}" -std=c++20 -O2 -Wall -Wextra -Werror -I native/src -I native/light \
   native/src/bench.cpp "$out"/*.o -o "$out/eco-bench"
 "$out/eco-bench"

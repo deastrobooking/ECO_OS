@@ -33,6 +33,14 @@ destroy owned objects. Control-thread graph edits prepare replacement runtime
 state; the audio thread adopts it at a defined boundary and retires old state
 off-thread.
 
+The initial C++ contract is `native/src/device.hpp`: stable descriptor, prepare
+and reset lifecycle, bounded MIDI event delivery, and interleaved stereo block
+processing into caller-owned memory. `LightDrumPadDevice`, `LightTb303Device`,
+and `LightFm6Device` adapt the existing C DSP. TB-303 now also has a direct
+note API and transport-independent render method; ECO's transport owns its
+event timing. These adapters retain LIGHT's current 48 kHz limitation. Device
+parameter metadata and persistent state serialization are not exposed yet.
+
 Use the same device implementation in the native ECO graph and, where useful,
 in a thin CLAP export wrapper. CLAP is an interoperability adapter, not the
 native module ABI. Third-party CLAP hosting is a separate host feature with
@@ -60,8 +68,8 @@ randomness, sample-rate behavior or latency.
 
 ## Suggested extraction order
 
-1. Make the existing LIGHT instruments conform to an explicit ECO device
-   interface without changing their sound or current control paths.
+1. Extend the device contract with parameter descriptors and versioned state,
+   and route project changes to those parameter/state APIs.
 2. Add one modular drum device or synth as a portable native implementation.
    Choose from product value; Box_Elder's multi-engine drum behavior and
    GLIESE_710's synth behavior are both candidates, while their JUCE wrappers

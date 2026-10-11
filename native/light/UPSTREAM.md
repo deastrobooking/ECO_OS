@@ -15,15 +15,22 @@ Local adaptations:
 - TB-303 glide coefficient adjusted for 48 kHz.
 - Drum noise moved from global mutable state into each pad.
 - Direct drum-pad renderer added so host sequencing owns the sample clock.
+- Reusable drum-pad initialization and disposal functions added so ECO can
+  prepare independent pad devices without owning a JUCE or rack wrapper.
+- Direct TB-303 note-on/off and transport-independent render entry points added
+  so the ECO transport, rather than the embedded LIGHT step sequencer, owns
+  event timing.
 - Assembly uses preprocessed ELF/Mach-O sections and symbol conventions.
 - Portable scalar implementations share the existing mixer ABI.
 - C++ wrapper preallocates instruments before audio starts. UI/MIDI commands go
   through a bounded SPSC queue; instrument state stays on the audio thread.
 - Native host currently exposes three drum voices, TB-303, FM6 E.Piano and FM6
-  Bell. Imported DSP includes more presets/pads; full parameter editors and
-  sample loading are not yet exposed.
-- Host sequencer drives TB-303 note changes; the original internal TB sequencer
-  API remains available but is not the timing authority in this host.
+  Bell through ECO's `NativeDevice` adapter contract. Imported DSP includes
+  more presets/pads; full parameter editors and sample loading are not yet
+  exposed.
+- Host sequencer drives TB-303 note changes through the direct note API; the
+  original internal TB sequencer API remains available but is not the timing
+  authority in this host.
 
 The upstream raylib UI, clip loader, `.light` parser, CoreMIDI host and miniaudio
 callback are **not** integrated. They need separate ports and safety work. The

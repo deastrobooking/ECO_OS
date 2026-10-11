@@ -98,6 +98,14 @@ and constrained patch graphs inside devices. These are workflow layers over one
 transport and audio graph, not separate engines. Develop the graph and native
 device contract before exposing arbitrary user-patched topologies.
 
+The current LIGHT drum pads, TB-303 voice and FM6 synths now run through
+`eco::NativeDevice`, with stable IDs, prepare/reset lifecycle, MIDI note events
+and allocation-free stereo processing. They are compiled as
+`eco-native-devices`, a portable target linked by the renderer, workstation
+and engine clients. The adapters retain LIGHT's fixed 48 kHz DSP; parameter
+metadata and saved state are not exposed yet. The next device slice is to add
+those descriptor/state APIs and route project control through them.
+
 ## Explicit non-goals for the first usable instrument
 
 - Claiming full Ableton Live feature parity while the audio graph, recording,

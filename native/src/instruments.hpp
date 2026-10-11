@@ -2,60 +2,52 @@
 #pragma once
 extern "C" {
 #include "drum_rack.h"
-#include "fm_synth.h"
 #include "mix_neon.h"
-#include "tb303.h"
+#include "light_config.h"
 }
+#include "devices/light_fm6.hpp"
+#include "devices/light_drum_pad.hpp"
+#include "devices/light_tb303.hpp"
 #include <algorithm>
 #include <array>
-#include <memory>
 #include <new>
 
 // Construct/destruct only on the control thread. DSP state has one RT owner.
 class LightInstruments {
-    std::unique_ptr<DrumRack, decltype(&drum_rack_free)> drums{drum_rack_create(), drum_rack_free};
-    std::unique_ptr<TB303, decltype(&tb303_free)> bass{tb303_create(), tb303_free};
-    std::array<FM6Synth *, 2> fm{};
+    std::array<eco::LightDrumPadDevice, 3> drums{
+        eco::LightDrumPadDevice{0}, eco::LightDrumPadDevice{1}, eco::LightDrumPadDevice{2}};
+    eco::LightTb303Device bass;
+    std::array<eco::LightFm6Device, 2> fm{eco::LightFm6Device{0}, eco::LightFm6Device{3}};
     std::array<int, 2> releaseIn{};
-    bool bassSounding = false;
 
   public:
     LightInstruments() {
-        if (!drums || !bass)
+        for (auto &drum : drums)
+            if (!drum.prepare(LIGHT_SAMPLE_RATE, 256))
+                throw std::bad_alloc();
+        if (!bass.prepare(LIGHT_SAMPLE_RATE, 256))
             throw std::bad_alloc();
-        fm[0] = fm6_create();
-        fm[1] = fm6_create();
-        if (!fm[0] || !fm[1]) {
-            fm6_free(fm[0]);
-            fm6_free(fm[1]);
+        if (!fm[0].prepare(LIGHT_SAMPLE_RATE, 256) ||
+            !fm[1].prepare(LIGHT_SAMPLE_RATE, 256))
             throw std::bad_alloc();
-        }
-        fm6_load_preset(fm[1], 3);
-        for (auto &step : bass->steps)
-            step = {36, false, false, false};
-        bass->last_step = 0;
-        bass->current_step = 0;
     }
-    ~LightInstruments() {
-        for (auto *synth : fm)
-            fm6_free(synth);
-    }
+    ~LightInstruments() = default;
     LightInstruments(const LightInstruments &) = delete;
     LightInstruments &operator=(const LightInstruments &) = delete;
     void noteOn(int track, int pitch, float velocity) noexcept {
         if (track < 3) {
-            drum_pad_trigger(&drums->pads[track], velocity);
+            drums[track].handleEvent({eco::DeviceEventKind::NoteOn, 0,
+                                      static_cast<uint8_t>(pitch), velocity});
             return;
         }
         if (track == 3) {
-            bass->steps[0] = {static_cast<uint8_t>(pitch), velocity > .9f, false, true};
-            bass->last_step = -1;
-            bass->volume = velocity;
-            bassSounding = true;
+            bass.handleEvent({eco::DeviceEventKind::NoteOn, 0,
+                              static_cast<uint8_t>(pitch), velocity});
             return;
         }
-        auto *synth = fm[track - 4];
-        fm6_note_on(synth, pitch, velocity);
+        auto &synth = fm[track - 4];
+        synth.handleEvent({eco::DeviceEventKind::NoteOn, 0,
+                           static_cast<uint8_t>(pitch), velocity});
         releaseIn[track - 4] = 7200; // MVP clip/audition gate: 150 ms.
     }
     void midiNoteOn(int track, int pitch, float velocity) noexcept {
@@ -68,45 +60,48 @@ class LightInstruments {
         // Sequenced MIDI notes use their event duration and explicit note-off;
         // they must not inherit the short audition/legacy-step release timer.
         releaseIn[track - 4] = 0;
-        fm6_note_on(fm[track - 4], pitch, velocity);
+        fm[track - 4].handleEvent({eco::DeviceEventKind::NoteOn, 0,
+                                   static_cast<uint8_t>(pitch), velocity});
     }
     void noteOff(int track, int pitch) noexcept {
-        if (track >= 4 && track < 6)
-            fm6_note_off(fm[track - 4], pitch);
+        if (track == 3)
+            bass.handleEvent({eco::DeviceEventKind::NoteOff, 0,
+                              static_cast<uint8_t>(pitch), 0.0f});
+        else if (track >= 4 && track < 6)
+            fm[track - 4].handleEvent({eco::DeviceEventKind::NoteOff, 0,
+                                       static_cast<uint8_t>(pitch), 0.0f});
     }
     void allNotesOff(int track) noexcept {
+        if (track >= 0 && track < 3) {
+            drums[track].handleEvent({eco::DeviceEventKind::AllNotesOff, 0, 0, 0.0f});
+            return;
+        }
+        if (track == 3) {
+            bass.handleEvent({eco::DeviceEventKind::AllNotesOff, 0, 0, 0.0f});
+            return;
+        }
         if (track < 4 || track >= 6)
             return;
-        auto *synth = fm[track - 4];
-        for (const auto &voice : synth->voices)
-            if (voice.in_use && voice.gate)
-                fm6_note_off(synth, voice.midi_note);
+        fm[track - 4].handleEvent({eco::DeviceEventKind::AllNotesOff, 0, 0, 0.0f});
     }
     void stop() noexcept {
-        for (auto &pad : drums->pads)
-            pad.active = false;
-        for (auto *synth : fm)
-            for (auto &voice : synth->voices)
-                voice.in_use = false;
-        bassSounding = false;
-        bass->vca_env = 0;
-        bass->vcf_env = 0;
-        bass->last_step = -1;
+        for (auto &drum : drums)
+            drum.reset();
+        bass.reset();
+        for (auto &synth : fm)
+            synth.reset();
         releaseIn.fill(0);
     }
     // Host calls one sample at a time to preserve sample-exact event boundaries.
     // A later optimization may segment blocks without changing this contract.
     void render(float *out, const std::array<float, 6> &gains) noexcept {
         for (int t = 0; t < 3; t++)
-            drum_pad_render(&drums->pads[t], out, 1, gains[t]);
-        if (bassSounding)
-            tb303_render(bass.get(), out, 1, 120, 0, true, gains[3]);
+            drums[t].process(out, 1, gains[t]);
+        bass.process(out, 1, gains[3]);
         for (int i = 0; i < 2; i++) {
             if (releaseIn[i] > 0 && --releaseIn[i] == 0)
-                for (auto &voice : fm[i]->voices)
-                    if (voice.gate)
-                        fm6_note_off(fm[i], voice.midi_note);
-            fm6_render(fm[i], out, 1, gains[i + 4]);
+                fm[i].handleEvent({eco::DeviceEventKind::AllNotesOff, 0, 0, 0.0f});
+            fm[i].process(out, 1, gains[i + 4]);
         }
     }
 };

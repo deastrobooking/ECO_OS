@@ -11,8 +11,9 @@ boot and latency qualification still need a Linux build host and target boards.
 
 ## What is here
 
-- LIGHT FM6, TB-303 and drum synthesis, integrated into a bounded-command native
-  audio engine at 48 kHz. ARM64 NEON mixer plus scalar fallback.
+- LIGHT FM6, TB-303 and drum synthesis, integrated as portable native device
+  adapters in a bounded-command audio engine at 48 kHz. ARM64 NEON mixer plus
+  scalar fallback.
 - A fullscreen Qt Quick workstation: six tracks, four clip scenes, sixteen-step
   patterns, bar-quantized launches, levels/mutes, ALSA MIDI, polyphonic note
   capture with tick-based duration, atomic project save/reload. The editor is
@@ -60,7 +61,7 @@ server, and is not a production image.
 ## Repository
 
 ```text
-native/               Qt/PipeWire host, sample-clock engine, tests, WAV renderer
+native/               portable engine/devices, Qt/PipeWire host, tests, renderer
   light/              adapted LIGHT DSP + upstream revision and source hashes
 yocto/kas/            pinned dependency sets and per-target build manifests
 yocto/meta-eco-core/  shared distro, image, application and audio session policy

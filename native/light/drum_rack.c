@@ -34,7 +34,58 @@ static inline float midi_hz(float note) {
     return 440.0f * powf(2.0f, (note - 69.0f) / 12.0f);
 }
 
+typedef struct {
+    DrumType type;
+    const char *name;
+    float volume, decay, pitch, tone, snap, color;
+} DrumPadPreset;
+
+static const DrumPadPreset kDefaultPads[] = {
+    {DRUM_KICK, "Kick", 1.00f, 0.45f, 0.0f, 0.65f, 0.50f, 0.10f},
+    {DRUM_SNARE, "Snare", 1.00f, 0.22f, 0.0f, 0.45f, 0.60f, 0.55f},
+    {DRUM_HIHAT, "Closed HH", 0.90f, 0.04f, 0.0f, 0.00f, 0.00f, 0.90f},
+    {DRUM_HIHAT, "Open HH", 0.85f, 0.32f, 0.0f, 0.00f, 0.00f, 0.85f},
+    {DRUM_CLAP, "Clap", 0.90f, 0.18f, 0.0f, 0.00f, 0.70f, 0.50f},
+    {DRUM_PERC, "Tom Hi", 0.80f, 0.25f, 7.0f, 0.50f, 0.30f, 0.40f},
+    {DRUM_PERC, "Tom Lo", 0.80f, 0.30f, -5.0f, 0.50f, 0.30f, 0.40f},
+    {DRUM_PERC, "Rim", 0.75f, 0.09f, 15.0f, 0.30f, 0.80f, 0.80f},
+};
+
 /* -------------------------------------------------------------- create/free */
+
+void drum_pad_init(DrumPad *pad, uint32_t pad_index) {
+    if (!pad)
+        return;
+    memset(pad, 0, sizeof(*pad));
+    snprintf(pad->name, sizeof(pad->name), "Pad %u", (unsigned)(pad_index + 1));
+    pad->noise_state = 0xCAFEBABEu + pad_index;
+    pad->volume = 0.9f;
+    pad->decay = 0.30f;
+    pad->tone = 0.50f;
+    pad->snap = 0.50f;
+    pad->color = 0.50f;
+    for (int s = 0; s < DRUM_STEPS; s++)
+        pad->step_vel[s] = 0.85f;
+    if (pad_index < sizeof(kDefaultPads) / sizeof(kDefaultPads[0])) {
+        const DrumPadPreset *preset = &kDefaultPads[pad_index];
+        pad->type = preset->type;
+        pad->volume = preset->volume;
+        pad->decay = preset->decay;
+        pad->pitch = preset->pitch;
+        pad->tone = preset->tone;
+        pad->snap = preset->snap;
+        pad->color = preset->color;
+        strncpy(pad->name, preset->name, sizeof(pad->name) - 1);
+    }
+}
+
+void drum_pad_dispose(DrumPad *pad) {
+    if (!pad)
+        return;
+    free(pad->samples);
+    pad->samples = NULL;
+    pad->frame_count = 0;
+}
 
 DrumRack *drum_rack_create(void) {
     DrumRack *dr = calloc(1, sizeof(DrumRack));
@@ -45,46 +96,8 @@ DrumRack *drum_rack_create(void) {
     dr->last_step = -1;
     dr->volume = 1.0f;
 
-    for (int i = 0; i < DRUM_PADS; i++) {
-        DrumPad *p = &dr->pads[i];
-        snprintf(p->name, sizeof(p->name), "Pad %d", i + 1);
-        p->noise_state = 0xCAFEBABEu + (uint32_t)i;
-        p->volume = 0.9f;
-        p->decay = 0.30f;
-        p->tone = 0.50f;
-        p->snap = 0.50f;
-        p->color = 0.50f;
-        for (int s = 0; s < DRUM_STEPS; s++)
-            p->step_vel[s] = 0.85f;
-    }
-
-    /* 8-voice default kit */
-    static const struct {
-        int idx;
-        DrumType type;
-        const char *name;
-        float vol, decay, pitch, tone, snap, color;
-    } K[] = {
-        {0, DRUM_KICK, "Kick", 1.00f, 0.45f, 0.0f, 0.65f, 0.50f, 0.10f},
-        {1, DRUM_SNARE, "Snare", 1.00f, 0.22f, 0.0f, 0.45f, 0.60f, 0.55f},
-        {2, DRUM_HIHAT, "Closed HH", 0.90f, 0.04f, 0.0f, 0.00f, 0.00f, 0.90f},
-        {3, DRUM_HIHAT, "Open HH", 0.85f, 0.32f, 0.0f, 0.00f, 0.00f, 0.85f},
-        {4, DRUM_CLAP, "Clap", 0.90f, 0.18f, 0.0f, 0.00f, 0.70f, 0.50f},
-        {5, DRUM_PERC, "Tom Hi", 0.80f, 0.25f, 7.0f, 0.50f, 0.30f, 0.40f},
-        {6, DRUM_PERC, "Tom Lo", 0.80f, 0.30f, -5.0f, 0.50f, 0.30f, 0.40f},
-        {7, DRUM_PERC, "Rim", 0.75f, 0.09f, 15.0f, 0.30f, 0.80f, 0.80f},
-    };
-    for (int i = 0; i < 8; i++) {
-        DrumPad *p = &dr->pads[K[i].idx];
-        p->type = K[i].type;
-        p->volume = K[i].vol;
-        p->decay = K[i].decay;
-        p->pitch = K[i].pitch;
-        p->tone = K[i].tone;
-        p->snap = K[i].snap;
-        p->color = K[i].color;
-        strncpy(p->name, K[i].name, sizeof(p->name) - 1);
-    }
+    for (uint32_t i = 0; i < DRUM_PADS; i++)
+        drum_pad_init(&dr->pads[i], i);
 
     /* Default 4/4 kick/snare/hihat/clap pattern */
     dr->pads[0].step_on[0] = dr->pads[0].step_on[8] = true;  /* kick */
@@ -103,7 +116,7 @@ void drum_rack_free(DrumRack *dr) {
     if (!dr)
         return;
     for (int i = 0; i < DRUM_PADS; i++)
-        free(dr->pads[i].samples);
+        drum_pad_dispose(&dr->pads[i]);
     free(dr);
 }
 

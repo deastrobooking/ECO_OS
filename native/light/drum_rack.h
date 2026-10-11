@@ -65,6 +65,8 @@ typedef struct {
 
 DrumRack *drum_rack_create(void);
 void drum_rack_free(DrumRack *dr);
+void drum_pad_init(DrumPad *pad, uint32_t pad_index);
+void drum_pad_dispose(DrumPad *pad);
 void drum_pad_trigger(DrumPad *pad, float velocity);
 void drum_rack_render(DrumRack *dr, float *stereo_out, uint32_t frames, double bpm,
                       uint64_t global_frame, bool playing, float track_vol);

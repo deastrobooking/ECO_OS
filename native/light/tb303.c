@@ -95,6 +95,80 @@ void tb303_free(TB303 *tb) {
     free(tb);
 }
 
+static void trigger_note(TB303 *tb, const TB303Step *step, bool slide) {
+    tb->target_freq = tb303_note_to_freq(step->note);
+    if (!slide) {
+        tb->osc_freq = tb->target_freq;
+        tb->vca_env = 1.0f;
+        tb->vcf_env = step->accent ? (1.0f + tb->accent_vol) : 1.0f;
+        memset(tb->filt_s, 0, sizeof(tb->filt_s));
+    }
+    tb->note_active = true;
+}
+
+void tb303_note_on(TB303 *tb, int midi_note, bool accent, bool slide) {
+    if (!tb)
+        return;
+    tb->current_step = 0;
+    tb->steps[0] = (TB303Step){(uint8_t)midi_note, accent, slide, true};
+    trigger_note(tb, &tb->steps[0], slide && tb->steps[TB303_STEPS - 1].on);
+}
+
+void tb303_note_off(TB303 *tb) {
+    if (tb)
+        tb->note_active = false;
+}
+
+void tb303_reset(TB303 *tb) {
+    if (!tb)
+        return;
+    tb->osc_phase = 0.0f;
+    tb->vca_env = 0.0f;
+    tb->vcf_env = 0.0f;
+    tb->note_active = false;
+    tb->last_step = -1;
+    memset(tb->filt_s, 0, sizeof(tb->filt_s));
+}
+
+void tb303_process(TB303 *tb, float *stereo_out, uint32_t frames, float track_vol) {
+    if (!tb || !stereo_out)
+        return;
+
+    /* Per-sample decay coefficient (avoids per-sample expf calls). */
+    float decay_time = tb->decay_time > 0.001f ? tb->decay_time : 0.001f;
+    float decay = 1.0f - expf(-1.0f / (decay_time * (float)SR));
+
+    for (uint32_t f = 0; f < frames; f++) {
+        if (tb->steps[tb->current_step].slide && tb->note_active)
+            tb->osc_freq = tb->target_freq + (tb->osc_freq - tb->target_freq) * SLIDE_COEFF;
+
+        float osc;
+        if (tb->wave_square)
+            osc = tb->osc_phase < 0.5f ? 0.8f : -0.8f;
+        else
+            osc = 1.0f - 2.0f * tb->osc_phase;
+        tb->osc_phase += tb->osc_freq * INV_SR;
+        if (tb->osc_phase >= 1.0f)
+            tb->osc_phase -= 1.0f;
+
+        float fc = tb->cutoff * (1.0f + tb->vcf_env * tb->env_mod * 4.0f);
+        if (fc > 8000.0f)
+            fc = 8000.0f;
+        float filt = ladder_step(tb->filt_s, osc * 2.5f, fc, tb->resonance);
+        if (tb->distortion > 0.01f) {
+            float drive = 1.0f + tb->distortion * 9.0f;
+            filt = fast_tanh(filt * drive);
+        }
+        float out = filt * tb->vca_env;
+        tb->vca_env -= tb->vca_env * decay;
+        tb->vcf_env -= tb->vcf_env * decay;
+
+        float sample = out * tb->volume * track_vol;
+        stereo_out[f * 2] += sample;
+        stereo_out[f * 2 + 1] += sample;
+    }
+}
+
 void tb303_render(TB303 *tb, float *stereo_out, uint32_t frames, double bpm, uint64_t global_frame,
                   bool playing, float track_vol) {
     if (!playing) {
@@ -118,62 +192,10 @@ void tb303_render(TB303 *tb, float *stereo_out, uint32_t frames, double bpm, uin
         bool slide = step->slide && tb->steps[prev].on;
 
         if (step->on) {
-            tb->target_freq = tb303_note_to_freq(step->note);
-            if (!slide) {
-                tb->osc_freq = tb->target_freq;
-                tb->vca_env = 1.0f;
-                tb->vcf_env = step->accent ? (1.0f + tb->accent_vol) : 1.0f;
-                memset(tb->filt_s, 0, sizeof(tb->filt_s)); /* crisp new note */
-            }
-            tb->note_active = true;
+            trigger_note(tb, step, slide);
         } else {
             tb->note_active = false;
         }
     }
-
-    /* Per-sample decay coefficient (avoids per-sample expf calls) */
-    float decay = 1.0f - expf(-1.0f / (tb->decay_time * (float)SR));
-
-    for (uint32_t f = 0; f < frames; f++) {
-        /* Slide: exponential pitch glide (τ ≈ 60 ms) */
-        if (tb->steps[tb->current_step].slide && tb->note_active) {
-            tb->osc_freq = tb->target_freq + (tb->osc_freq - tb->target_freq) * SLIDE_COEFF;
-        }
-
-        /* Oscillator */
-        float osc;
-        if (tb->wave_square) {
-            osc = tb->osc_phase < 0.5f ? 0.8f : -0.8f;
-        } else {
-            osc = 1.0f - 2.0f * tb->osc_phase; /* sawtooth: 1 → -1 */
-        }
-        tb->osc_phase += tb->osc_freq * INV_SR;
-        if (tb->osc_phase >= 1.0f)
-            tb->osc_phase -= 1.0f;
-
-        /* Filter cutoff = base + envelope modulation */
-        float fc = tb->cutoff * (1.0f + tb->vcf_env * tb->env_mod * 4.0f);
-        if (fc > 8000.0f)
-            fc = 8000.0f;
-
-        /* Ladder filter (non-linear) */
-        float filt = ladder_step(tb->filt_s, osc * 2.5f, fc, tb->resonance);
-
-        /* Overdrive waveshaper */
-        if (tb->distortion > 0.01f) {
-            float drive = 1.0f + tb->distortion * 9.0f;
-            filt = fast_tanh(filt * drive);
-        }
-
-        /* VCA */
-        float out = filt * tb->vca_env;
-
-        /* Envelope decay (per sample) */
-        tb->vca_env -= tb->vca_env * decay;
-        tb->vcf_env -= tb->vcf_env * decay;
-
-        float s = out * tb->volume * track_vol;
-        stereo_out[f * 2] += s;
-        stereo_out[f * 2 + 1] += s;
-    }
+    tb303_process(tb, stereo_out, frames, track_vol);
 }

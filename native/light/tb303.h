@@ -45,6 +45,10 @@ typedef struct {
 
 TB303 *tb303_create(void);
 void tb303_free(TB303 *tb);
+void tb303_note_on(TB303 *tb, int midi_note, bool accent, bool slide);
+void tb303_note_off(TB303 *tb);
+void tb303_reset(TB303 *tb);
+void tb303_process(TB303 *tb, float *stereo_out, uint32_t frames, float track_vol);
 void tb303_render(TB303 *tb, float *stereo_out, uint32_t frames, double bpm, uint64_t global_frame,
                   bool playing, float track_vol);
 float tb303_note_to_freq(int midi_note);
