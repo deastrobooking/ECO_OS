@@ -13,9 +13,11 @@ Environment: Apple Silicon macOS, Apple Clang 15. Records below are from
   2026-10-10 run executed **without** ASan/UBSan (the script now warns). Engine
   tests pass in NEON and scalar modes; sanitizer coverage must be re-confirmed
   on Linux.
-- `project_io_test` does not compile with Apple clang 15 (no floating-point
-  `std::from_chars`). Untested on this host until REVIEW.md item P0.3.
-- `clap_host_test` and the Qt/PipeWire/ALSA host were not run.
+- Float JSON now uses classic-locale streams; `project_io_test` passes on Apple
+  clang 15. Steps now derive from the MIDI tick clock; a tempo/tick lock test
+  sweeps tempo mid-bar.
+- `cmake -DECO_CORE_ONLY=ON` + `ctest`: engine, project_io and clap_host pass.
+- The Qt/PipeWire/ALSA host was not compiled or run.
 
 ## Executed and passed
 
@@ -58,7 +60,7 @@ Environment: Apple Silicon macOS, Apple Clang 15. Records below are from
   firmware compilation/flashing.
 - PREEMPT_RT hardware configuration, real-time privilege verification, callback
   latency distribution, xrun soak or physical round-trip measurement.
-- CI. No GitHub Actions workflows exist in the repository yet (REVIEW.md P0.1).
+- CI. `.github/workflows/native.yml` exists but has not run on GitHub.
 - C-versus-Rust performance comparison. No Rust implementation was introduced.
 
 This repository has no flashable artifact yet. The next validation gate is a

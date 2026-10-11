@@ -166,7 +166,8 @@ configuration “64-frame certified” merely because a request was accepted.
 
 ## CI
 
-No CI workflow exists yet; `.github/workflows/` is absent. The planned jobs
-(Linux x86/ARM64 sanitizer tests, full Qt/PipeWire compile, kas metadata check)
-are item P0.1–P0.2 in [REVIEW.md](REVIEW.md). Full Yocto builds belong on an
+`.github/workflows/native.yml` defines Linux x86-64 and ARM64 sanitizer tests
+(default and forced-scalar), CMake `ctest` including the CLAP host test, a
+compile-only Qt/PipeWire/ALSA build, and the kas metadata check. It has been
+written but not yet run on GitHub (REVIEW.md P0). Full Yocto builds belong on an
 adequately sized Linux runner.

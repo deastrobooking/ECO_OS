@@ -236,8 +236,37 @@ int main() {
         for (auto v : buf)
             check(std::isfinite(v), "out-of-range frame offset clamped safely");
     }
+    {
+        // Step grid and MIDI tick clock must stay locked across tempo changes.
+        static eco::Engine tempo; // ~1.3 MB: keep off the stack
+        eco::Command cmd;
+        cmd.action = eco::Action::Update;
+        cmd.project = eco::demo();
+        cmd.project.bpm = 120;
+        tempo.commands.push(cmd);
+        cmd.action = eco::Action::Start;
+        tempo.commands.push(cmd);
+        std::array<float, 64 * 2> buf{};
+        const float tempos[] = {120, 60, 200, 45, 240, 97};
+        for (unsigned block = 0; block < 4000; block++) {
+            if (block % 500 == 250) {
+                cmd.action = eco::Action::Update;
+                cmd.project.bpm = tempos[(block / 500) % 6];
+                tempo.commands.push(cmd);
+            }
+            render(tempo, buf.data(), 64);
+            // transportTick is published after the block's final advance, so
+            // the step may lag it by one sample (< 1 tick at any tempo).
+            const auto tick = tempo.transportTick.load();
+            const int stepNow = tempo.currentStep.load();
+            check(stepNow == int((tick / eco::TicksPerStep) % eco::Steps) ||
+                      (tick > 0 &&
+                       stepNow == int(((tick - 1) / eco::TicksPerStep) % eco::Steps)),
+                  "step grid stays locked to the tick clock across tempo changes");
+        }
+    }
     std::puts("PASS: LIGHT FM6/release, drum isolation, SIMD scalar equivalence/tails, queue "
               "overflow/wrap, silence, sample clock, finite audio, quantized launch, stop, mute, "
-              "block-size invariance, sample-accurate command scheduling, no C++ render "
-              "allocations");
+              "block-size invariance, sample-accurate command scheduling, tempo/tick lock, no C++ "
+              "render allocations");
 }

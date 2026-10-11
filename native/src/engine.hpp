@@ -132,7 +132,7 @@ class Engine {
     std::array<float, Tracks> gains{};
     float master = 0;
     std::array<int, Tracks> active{}, pending{-1, -1, -1, -1, -1, -1};
-    double nextStep = 0;
+    uint64_t lastAbsStep = UINT64_MAX;
     uint64_t frame = 0;
     uint64_t renderedFrame = 0;
     double midiTickPosition = 0;
@@ -243,7 +243,7 @@ class Engine {
                 playing = false;
                 step = -1;
                 frame = 0;
-                nextStep = 0;
+                lastAbsStep = UINT64_MAX;
                 midiTickPosition = 0;
                 lastMidiTick = UINT64_MAX;
                 break;
@@ -254,7 +254,7 @@ class Engine {
                 playing = true;
                 step = -1;
                 frame = 0;
-                nextStep = 0;
+                lastAbsStep = UINT64_MAX;
                 midiTickPosition = 0;
                 lastMidiTick = UINT64_MAX;
                 break;
@@ -309,8 +309,13 @@ class Engine {
                 pendingTimedCount--;
                 dispatchTimed(event, static_cast<unsigned>(n));
             }
-            if (playing && double(frame) >= nextStep) {
-                step = (step + 1) % Steps;
+            // One clock: steps are derived from the same tick position the
+            // MIDI clips use, so tempo changes cannot separate them.
+            const uint64_t absStep =
+                static_cast<uint64_t>(midiTickPosition) / TicksPerStep;
+            if (playing && (lastAbsStep == UINT64_MAX || absStep != lastAbsStep)) {
+                lastAbsStep = absStep;
+                step = static_cast<int>(absStep % Steps);
                 if (step == 0)
                     for (unsigned i = 0; i < Tracks; i++)
                         if (pending[i] >= 0) {
@@ -326,7 +331,6 @@ class Engine {
                     if (midi.noteCount == 0 && legacy.velocity > 0)
                         trigger(i, legacy.pitch, legacy.velocity);
                 }
-                nextStep += rate * 60.0 / std::clamp(project.bpm, 40.f, 240.f) / 4;
             }
             if (playing) {
                 const auto tick = static_cast<uint64_t>(midiTickPosition);
@@ -405,7 +409,7 @@ class Engine {
             if (playing)
                 frame++;
             if (playing)
-                midiTickPosition += double(project.bpm) * TicksPerQuarter / (60.0 * rate);
+                midiTickPosition += double(std::clamp(project.bpm, 40.f, 240.f)) * TicksPerQuarter / (60.0 * rate);
             renderedFrame++;
         }
         // Mixed in after the per-sample loop, at block rate rather than the

@@ -24,13 +24,17 @@ Nothing here is a flashable or hardware-qualified artifact.
 | F2 | `engine_test` segfaulted on startup. `eco::Engine` is ~1.3 MB (`Queue<Command,32>` embeds 32 × 40 KB `Project` copies) and the test put six on the stack. | Test engines are now `static`. |
 | F3 | The test's replacement `operator new` (allocation guard) cannot coexist with ASan on macOS, so the guard and sanitizers were mutually exclusive. | Sanitized pass builds with `-DECO_NO_ALLOC_GUARD`; a second unsanitized pass runs the allocation guard. |
 | F4 | Hosts with a broken sanitizer runtime (this one aborts on an empty `main`) failed every test with an unrelated ASan error. | Script probes the runtime and falls back with a loud warning instead of failing. |
+| F6 | Float JSON I/O used `std::from_chars`/`to_chars`, unavailable in Apple clang 15 libc++ (finding 14). | Classic-locale stream parse and shortest-round-trip format; `project_io_test` passes. |
+| F7 | `eco-project-io-tests` in CMake lacked the CLAP include path. | Added; `ctest` (engine, project_io, clap_host) passes on macOS. |
+| F8 | Step grid and MIDI clips ran on two clocks (finding 1); tempo changes could split them. | Steps derive from the tick clock; BPM clamp applied to both; new tempo/tick lock test sweeps 45–240 BPM mid-bar. |
+| F9 | No CI. | `.github/workflows/native.yml` added (unexecuted; see P0). |
 | F5 | Docs claimed GitHub Actions workflows were provided. None exist. | Docs corrected; CI is plan item P1. |
 
 ## Open findings, ranked
 
 ### Correctness / timing
 
-1. **Two sequencer clocks.** The step grid advances on `frame >= nextStep`
+1. **(Fixed, F8.) Two sequencer clocks.** The step grid advances on `frame >= nextStep`
    (period computed at trigger time from the then-current BPM), while MIDI
    clips advance on `midiTickPosition` (integrated per sample with the current
    BPM). A tempo change mid-bar, or accumulated rounding, lets them diverge, so
@@ -83,14 +87,14 @@ Nothing here is a flashable or hardware-qualified artifact.
 13. **`Controller` is a monolith** (project state, ALSA, capture, persistence,
     plugin loading). It cannot be tested without PipeWire/ALSA. UI.md §U1.1
     already plans the split.
-14. **Project I/O uses `std::from_chars`/`std::to_chars` for `float`/`double`**,
+14. **(Fixed, F6.) Project I/O uses `std::from_chars`/`std::to_chars` for `float`/`double`**,
     which Apple clang 15's libc++ does not provide, so `project_io_test` does not
     compile on this macOS toolchain. GCC 11+ on Linux is fine. Either require a
     newer toolchain, or fall back to `strtod` in the C locale.
 
 ### Process and coverage
 
-15. **No CI.** The only automated gate is a local script. The Linux-only code
+15. **(Workflow written, not yet run.) No CI.** The only automated gate is a local script. The Linux-only code
     (`audio.hpp`, `controller.hpp`, `main.cpp`, QML) is never compiled by any
     check.
 16. **`clap_host_test` is not part of `check-core.sh`**; only CMake/ctest runs
@@ -110,6 +114,10 @@ Nothing here is a flashable or hardware-qualified artifact.
 Ordered by what unblocks the roadmap. "Gate" is the observable exit condition.
 
 ### P0 — make verification real (days)
+
+Status 2026-10-10: P0.1–P0.4 are implemented. The workflow file has not run on
+GitHub, so Linux sanitizer results and the Qt host compile remain unverified
+until the first CI run.
 
 | Item | Gate |
 |---|---|

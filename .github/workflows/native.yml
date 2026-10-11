@@ -1,0 +1,51 @@
+name: native
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    # Portable engine + LIGHT DSP: sanitizers, scalar and NEON, CLAP host test.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sanitizer gate (default kernels)
+        run: ./tools/check-core.sh
+      - name: Sanitizer gate (forced scalar)
+        run: ECO_FORCE_SCALAR=1 ./tools/check-core.sh
+      - name: CMake core build and ctest
+        run: |
+          cmake -S native -B build-core -DECO_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-core -j
+          ctest --test-dir build-core --output-on-failure
+
+  host:
+    # Compile-only check of the Qt/PipeWire/ALSA workstation, which no other
+    # job builds. Does not run it: CI has no audio device or display.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools \
+            libpipewire-0.3-dev libasound2-dev
+      - name: Configure and build
+        run: |
+          cmake -S native -B build-host -G Ninja -DBUILD_TESTING=OFF
+          cmake --build build-host
+
+  metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install 'kas==4.8'
+      - run: python tools/check-metadata.py

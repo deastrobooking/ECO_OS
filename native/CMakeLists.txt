@@ -36,7 +36,7 @@ if(BUILD_TESTING)
   add_test(NAME engine COMMAND eco-engine-tests)
 
   add_executable(eco-project-io-tests tests/project_io_test.cpp)
-  target_include_directories(eco-project-io-tests PRIVATE src light)
+  target_include_directories(eco-project-io-tests PRIVATE src light ${CLAP_INCLUDE_DIR})
   add_test(NAME project_io COMMAND eco-project-io-tests)
 
   # Test-only fixture: a minimal gated-square CLAP instrument, built as a
