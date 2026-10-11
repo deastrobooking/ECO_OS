@@ -3,16 +3,42 @@
 #include "engine.hpp"
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#include <atomic>
+#include <cstdint>
 #include <stdexcept>
 #include <thread>
+#include <time.h>
 
 class Audio {
     eco::Engine &engine;
     pw_main_loop *loop = nullptr;
     pw_stream *stream = nullptr;
     std::thread thread;
+    // A seqlock-style snapshot pairs Engine's absolute frame count with both
+    // PipeWire's clock and CLOCK_MONOTONIC. MIDI queue stamps are converted to
+    // monotonic time on the control thread, then projected onto the PW clock.
+    std::atomic<uint64_t> clockSequence{0}, clockFrame{0}, clockPipeWireNs{0},
+        clockMonotonicNs{0};
+    void publishClockAnchor(uint64_t pwNs, uint64_t monotonicNs) noexcept {
+        clockSequence.fetch_add(1, std::memory_order_acq_rel);
+        clockFrame.store(engine.renderedFrameSnapshot.load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+        clockPipeWireNs.store(pwNs, std::memory_order_relaxed);
+        clockMonotonicNs.store(monotonicNs, std::memory_order_relaxed);
+        clockSequence.fetch_add(1, std::memory_order_release);
+    }
     static void process(void *data) {
         auto &self = *static_cast<Audio *>(data);
+        // Pair the current callback frame with the PipeWire clock. The API is
+        // realtime-safe; monotonic time provides the bridge to ALSA queue time.
+        pw_time pwTime{};
+        const bool hasPwTime =
+            pw_stream_get_time_n(self.stream, &pwTime, sizeof(pwTime)) >= 0;
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        const auto monotonicNs = uint64_t(ts.tv_sec) * 1000000000ull + ts.tv_nsec;
+        if (hasPwTime && pwTime.now)
+            self.publishClockAnchor(pwTime.now, monotonicNs);
         auto *b = pw_stream_dequeue_buffer(self.stream);
         if (!b)
             return;
@@ -37,6 +63,33 @@ class Audio {
 
   public:
     std::atomic<int> state{PW_STREAM_STATE_UNCONNECTED};
+    bool frameForMonotonicNs(uint64_t eventMonotonicNs, uint64_t &outFrame) const noexcept {
+        uint64_t sequence = 0, frame = 0, pwNs = 0, monoNs = 0;
+        do {
+            sequence = clockSequence.load(std::memory_order_acquire);
+            if (sequence & 1)
+                continue;
+            frame = clockFrame.load(std::memory_order_relaxed);
+            pwNs = clockPipeWireNs.load(std::memory_order_relaxed);
+            monoNs = clockMonotonicNs.load(std::memory_order_relaxed);
+        } while ((sequence & 1) || sequence != clockSequence.load(std::memory_order_acquire));
+        if (!pwNs)
+            return false;
+        const int64_t monoDelta = eventMonotonicNs >= monoNs
+                                      ? int64_t(eventMonotonicNs - monoNs)
+                                      : -int64_t(monoNs - eventMonotonicNs);
+        // Project through the paired monotonic/PipeWire anchor. Keeping the
+        // PipeWire subtraction explicit documents the clock domain mapping.
+        const int64_t eventPwNs = int64_t(pwNs) + monoDelta;
+        const int64_t pwDelta = eventPwNs - int64_t(pwNs);
+        if (pwDelta >= 0) {
+            outFrame = frame + uint64_t(pwDelta) * eco::SampleRate / 1000000000ull;
+        } else {
+            const auto framesBack = uint64_t(-pwDelta) * eco::SampleRate / 1000000000ull;
+            outFrame = framesBack > frame ? 0 : frame - framesBack;
+        }
+        return true;
+    }
     explicit Audio(eco::Engine &e) : engine(e) {
         pw_init(nullptr, nullptr);
         loop = pw_main_loop_new(nullptr);

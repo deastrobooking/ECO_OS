@@ -10,7 +10,7 @@ Pinned source: `15f08cae2ea297c8906ffc2cd37bf5e4aa62c693`.
 | Drum rack | Six sound types/sample capability; global noise generator | Imported; per-pad noise state; direct-pad API; first three drum voices exposed. Full 16-pad/sample UI later. |
 | NEON primitives | ARM64 code with Mach-O section/underscore symbols | Adapted to preprocessed ELF/Mach-O assembly; scalar fallback; both implementations tested on host. Linux ELF assembly also compiled. |
 | Audio host | miniaudio callback holds session mutex | Replaced with native PipeWire adapter and bounded SPSC commands; no callback mutex. |
-| MIDI | CoreMIDI implementation despite README saying no MIDI | Linux ALSA sequencer input added; current control-thread polling is an MVP limitation. |
+| MIDI | CoreMIDI implementation despite README saying no MIDI | Linux ALSA sequencer input uses event-driven control-thread delivery and optional absolute timestamp-to-frame scheduling; hardware timing validation remains. |
 | Session/save | Human-readable `.light` parser and instrument serialization; docs disagree | Keep as reference for future validated importer; do not claim compatibility. Current new format is `.eco.json` v1. |
 | UI | raylib, extensive 8×8 grid/instrument panels; shared-state assumptions | Not imported into the running host. Retain native Qt shell; port interactions after backend/model stabilization. Port order, screen map and invariants are specified in docs/UI.md (§U4: TB-303/FM6/drum editors, 8×8 launcher). |
 | Bundled dependencies | Repo actually includes miniaudio, ARM macOS raylib libraries, objects and executable | No binaries or third-party library copies imported. Source-built dependencies come from Yocto recipes. |

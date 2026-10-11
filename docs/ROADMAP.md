@@ -14,16 +14,20 @@ compatibility goal, not a claim about the current six-track prototype.
   start, duration, and loop length. The engine schedules note starts/releases
   from its sample counter. The UI still has only the 16-step editor; there is
   no piano roll, MIDI output, automation lane, arrangement timeline, or CV.
-- ALSA MIDI input is event-driven on the Qt control thread, but input is
-  converted to commands at the next audio block. Incoming ALSA timestamps are
-  ignored. Armed capture quantizes note starts to the current step and measures
-  duration from the latest engine tick, so recorded timing is not yet sample
-  accurate. MIDI channels are saved but the built-in LIGHT instruments do not
-  yet route by channel.
+- ALSA MIDI input is event-driven on the Qt control thread. The audio callback
+  pairs its absolute sample frame with PipeWire and monotonic clock readings;
+  absolute ALSA queue timestamps are mapped to engine frames and held in a
+  fixed-capacity audio-thread scheduler. Missing timestamps or clock anchors
+  fall back to the next block. Events already late when they reach the engine
+  are dispatched at the next available sample, so input timing still needs
+  loopback measurement and latency compensation. Armed capture still
+  quantizes note starts to the current step and measures duration from the
+  latest engine tick. MIDI channels are saved but the built-in LIGHT
+  instruments do not yet route by channel.
 - `Audio` owns a PipeWire playback stream and requests a 256/48000 node
-  latency. It does not expose transport time, audio-device selection, capture,
-  xrun statistics, or an audio graph. This is a playback prototype, not yet a
-  DAW audio engine.
+  latency. It now exposes an internal clock mapping for MIDI scheduling, but
+  has no device selection, capture, xrun statistics, or audio graph. This is a
+  playback prototype, not yet a DAW audio engine.
 - The CLAP host loads the first descriptor in a bundle, assumes stereo output,
   has no parameter/state/GUI/transport support, and drops plugin output events.
   It also calls `start_processing()` and `stop_processing()` on the control
@@ -81,12 +85,15 @@ calibration, gate polarity and device limits in the hardware profile.
 
 ## Research notes
 
-- PipeWire's `pw_stream_get_time_n()` is RT-safe; its `pw_time.ticks`, rate,
-  delay, and monotonic `now` provide the basis for an audio clock and detecting
-  discontinuities. This makes a sample timeline feasible in the existing
-  backend, but ALSA event timestamps still need conversion and testing.
-- ALSA sequencer events can carry queue timestamps, including relative queue
-  time. ECO currently reads MIDI events without using those timestamps.
+- PipeWire's `pw_stream_get_time_n()` is RT-safe. ECO currently pairs its
+  `now` clock value with `CLOCK_MONOTONIC` and the engine callback frame. This
+  is a useful first mapping, but hardware loopback tests must establish its
+  accuracy across graph quantum changes and xruns.
+- ALSA input ports request absolute real-time stamps from a private running
+  sequencer queue. The controller translates absolute event stamps against
+  queue time and maps them through the PipeWire anchor; unsupported or late
+  events use next-block/next-sample fallback behavior. Relative stamps and
+  timestamp edge cases still need ALSA-device validation.
 - CLAP requires hosts to respect each method's thread specification. The
   current processing start/stop calls violate that contract. Its fundamental
   integration surface also includes state, params, audio ports, note ports,

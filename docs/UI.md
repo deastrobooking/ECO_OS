@@ -159,9 +159,9 @@ it visualizes.
 9. **Velocity lane + per-step pitch** under the step row; depends on project
    MIDI note events now store pitch, velocity, channel, start, and duration;
    replace this step-only editor with an event-aware piano roll and velocity lane.
-10. **Sub-step playhead.** Show position within the bar using engine frame
-    telemetry, not just the 16-step index; depends on the PipeWire stream
-    frame-position exposure noted in [controller.hpp](../native/src/controller.hpp).
+10. **Sub-step playhead.** Show position within the bar using the engine's
+    published absolute frame counter, not just the 16-step index; add a UI
+    property and musical-position mapping.
 11. **Pattern length and time signature** become real controls, replacing the
     static "4:4" label; engine constants become per-project values.
 
@@ -229,7 +229,7 @@ engine/model dependency lands.
 | # | Feature | Engine/model dependency | Milestone |
 |---|---|---|---|
 | F1 | Master fader, solo, meters, xrun display | Peak/xrun atomics (U1.5) | M1 |
-| F2 | Timestamped MIDI capture into clips | ALSA→frameOffset conversion (PLAN backlog 3) | M3 |
+| F2 | Timestamped MIDI capture into clips | Capture starts remain step-quantized and durations tick-based; live input has frame scheduling | M3 |
 | F3 | Note duration, polyphony, per-step pitch/velocity | Project model v2, `.eco.json` schema bump with migration | M3–M4 |
 | F4 | Pattern length ≠ 16, time signatures | Engine step model generalization | M4 |
 | F5 | TB-303 accent/slide; FM6 + drum parameters | Per-instrument parameter commands + project fields | M4 |

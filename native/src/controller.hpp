@@ -15,6 +15,7 @@
 #include <alsa/asoundlib.h>
 #include <memory>
 #include <poll.h>
+#include <time.h>
 #include <vector>
 
 class Controller : public QObject {
@@ -36,6 +37,9 @@ class Controller : public QObject {
     std::unique_ptr<Audio> audio;
     QTimer timer;
     snd_seq_t *midi = nullptr;
+    int midiQueue = -1;
+    int midiPort = -1;
+    bool midiQueueRunning = false;
     std::vector<QSocketNotifier *> midiNotifiers;
     int selected_ = 0, scene_ = 0;
     struct CapturedMidiNote {
@@ -144,10 +148,38 @@ class Controller : public QObject {
         }
         return selected_;
     }
-    // Commands still land at frameOffset 0 (start of the next render block):
-    // Engine can schedule Audition/NoteOff mid-block, but turning an ALSA
-    // event timestamp into a sample offset needs the audio stream's current
-    // frame position, which Audio (PipeWire) does not expose yet. Follow-up.
+    bool timestampMidiCommand(const snd_seq_event_t *event, eco::Command &command) const {
+        if (!audio || !midiQueueRunning || midiQueue < 0 || event->queue != midiQueue ||
+            (event->flags & SND_SEQ_TIME_STAMP_MASK) != SND_SEQ_TIME_STAMP_REAL ||
+            (event->flags & SND_SEQ_TIME_MODE_MASK) != SND_SEQ_TIME_MODE_ABS)
+            return false;
+
+        snd_seq_queue_status_t *status = nullptr;
+        snd_seq_queue_status_alloca(&status);
+        if (snd_seq_get_queue_status(midi, midiQueue, status) < 0)
+            return false;
+        const auto *queueNow = snd_seq_queue_status_get_real_time(status);
+        if (!queueNow)
+            return false;
+        const int64_t eventNs = int64_t(event->time.time.tv_sec) * 1000000000ll +
+                                event->time.time.tv_nsec;
+        const int64_t queueNowNs = int64_t(queueNow->tv_sec) * 1000000000ll +
+                                   queueNow->tv_nsec;
+        timespec ts{};
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+            return false;
+        const int64_t monoNowNs = int64_t(ts.tv_sec) * 1000000000ll + ts.tv_nsec;
+        const int64_t deltaNs = eventNs - queueNowNs;
+        const auto eventMonoNs = deltaNs >= 0
+                                     ? uint64_t(monoNowNs + deltaNs)
+                                     : uint64_t(std::max<int64_t>(0, monoNowNs + deltaNs));
+        uint64_t targetFrame = 0;
+        if (!audio->frameForMonotonicNs(eventMonoNs, targetFrame))
+            return false;
+        command.targetFrame = targetFrame;
+        command.hasTargetFrame = true;
+        return true;
+    }
     void pollMidi() {
         if (!midi)
             return;
@@ -159,6 +191,7 @@ class Controller : public QObject {
                 c.track = selected_;
                 c.pitch = e->data.note.note;
                 c.velocity = e->data.note.velocity / 127.f;
+                timestampMidiCommand(e, c);
                 send(c);
                 captureMidiOn(e->data.note.note, e->data.note.channel,
                               e->data.note.velocity / 127.f);
@@ -170,6 +203,7 @@ class Controller : public QObject {
                 c.action = eco::Action::NoteOff;
                 c.track = noteTrack;
                 c.pitch = e->data.note.note;
+                timestampMidiCommand(e, c);
                 send(c);
             } else if (e->type == SND_SEQ_EVENT_CONTROLLER) {
                 const int cc = e->data.control.param, value = e->data.control.value;
@@ -193,9 +227,26 @@ class Controller : public QObject {
         }
         if (snd_seq_open(&midi, "default", SND_SEQ_OPEN_INPUT, SND_SEQ_NONBLOCK) >= 0) {
             snd_seq_set_client_name(midi, "ECO Controller");
-            snd_seq_create_simple_port(
+            midiQueue = snd_seq_alloc_named_queue(midi, "ECO MIDI input clock");
+            if (midiQueue >= 0 && snd_seq_start_queue(midi, midiQueue, nullptr) >= 0 &&
+                snd_seq_drain_output(midi) >= 0)
+                midiQueueRunning = true;
+            midiPort = snd_seq_create_simple_port(
                 midi, "Input", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
                 SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+            // Ask ALSA to stamp received events against our running real-time
+            // queue. If timestamp support is unavailable, commands retain the
+            // safe next-block fallback.
+            if (midiPort >= 0 && midiQueueRunning) {
+                snd_seq_port_info_t *info = nullptr;
+                snd_seq_port_info_alloca(&info);
+                if (snd_seq_get_port_info(midi, midiPort, info) >= 0) {
+                    snd_seq_port_info_set_timestamping(info, 1);
+                    snd_seq_port_info_set_timestamp_real(info, 1);
+                    snd_seq_port_info_set_timestamp_queue(info, midiQueue);
+                    snd_seq_set_port_info(midi, midiPort, info);
+                }
+            }
             // React to MIDI as soon as ALSA has it queued, instead of
             // waiting on the UI timer: that capped input latency at up to
             // one tick (33 ms), well past what "timestamped" MIDI needs.
@@ -229,8 +280,13 @@ class Controller : public QObject {
             delete old;
         for (auto *notifier : midiNotifiers)
             delete notifier;
-        if (midi)
+        if (midi) {
+            if (midiQueue >= 0) {
+                snd_seq_stop_queue(midi, midiQueue, nullptr);
+                snd_seq_free_queue(midi, midiQueue);
+            }
             snd_seq_close(midi);
+        }
     }
     int step() const {
         return engine.currentStep.load();

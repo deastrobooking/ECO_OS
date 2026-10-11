@@ -100,11 +100,15 @@ struct Command {
     std::array<int, Tracks> active{};
     int track = 0, clip = 0, pitch = 60;
     float velocity = .8f;
-    // Sample offset within the render() block this command should take
-    // effect at (Audition/NoteOff only; other actions apply immediately).
+    // Sample offset within the render() block this live note command should
+    // take effect at when it has no absolute target frame.
     // A default of 0 applies at the start of the block, matching prior
     // behavior for callers that don't set it.
     unsigned frameOffset = 0;
+    // Optional absolute audio frame target for timestamped MIDI. If false,
+    // frameOffset retains its within-next-block meaning.
+    uint64_t targetFrame = 0;
+    bool hasTargetFrame = false;
     // SwapPlugin only: a loaded ClapHost, already activated on the control
     // thread. Ownership transfers to Engine; the previously installed host
     // (if any) comes back via Engine::retiredPlugin for the control thread
@@ -115,7 +119,7 @@ struct TimedCommand {
     Action action = Action::Stop;
     int track = 0, pitch = 60;
     float velocity = .8f;
-    unsigned frameOffset = 0;
+    uint64_t targetFrame = 0;
 };
 class Engine {
     LightInstruments instruments;
@@ -125,8 +129,11 @@ class Engine {
     std::array<int, Tracks> active{}, pending{-1, -1, -1, -1, -1, -1};
     double nextStep = 0;
     uint64_t frame = 0;
+    uint64_t renderedFrame = 0;
     double midiTickPosition = 0;
     uint64_t lastMidiTick = UINT64_MAX;
+    std::array<TimedCommand, 128> pendingTimed{};
+    unsigned pendingTimedCount = 0;
     static constexpr unsigned rate = SampleRate;
     int step = -1;
     bool playing = false;
@@ -140,11 +147,41 @@ class Engine {
             return;
         instruments.noteOn(track, std::clamp(pitch, 24, 96), std::clamp(velocity, 0.f, 1.f));
     }
+    void enqueueTimed(const TimedCommand &event) noexcept {
+        if (pendingTimedCount == pendingTimed.size()) {
+            droppedTimedEvents.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        unsigned at = pendingTimedCount;
+        while (at > 0 && pendingTimed[at - 1].targetFrame > event.targetFrame) {
+            pendingTimed[at] = pendingTimed[at - 1];
+            at--;
+        }
+        pendingTimed[at] = event;
+        pendingTimedCount++;
+    }
+    void dispatchTimed(const TimedCommand &event, unsigned frameOffset) noexcept {
+        if (event.track == int(Tracks)) {
+            if (!pluginHost)
+                return;
+            if (event.action == Action::NoteOff)
+                pluginHost->noteOff(event.pitch, frameOffset);
+            else
+                pluginHost->noteOn(event.pitch, event.velocity, frameOffset);
+        } else if (event.action == Action::MidiInput)
+            instruments.midiNoteOn(event.track, event.pitch, event.velocity);
+        else if (event.action == Action::Audition)
+            trigger(event.track, event.pitch, event.velocity);
+        else
+            instruments.noteOff(event.track, event.pitch);
+    }
 
   public:
     Queue<Command, 32> commands;
     std::atomic<int> currentStep{-1};
     std::atomic<uint64_t> transportTick{0};
+    std::atomic<uint64_t> renderedFrameSnapshot{0};
+    std::atomic<uint64_t> droppedTimedEvents{0};
     std::atomic<unsigned> activeClips{0};
     // Set by render() when SwapPlugin replaces an already-installed plugin.
     // The control thread must exchange this back to nullptr and delete what
@@ -158,11 +195,10 @@ class Engine {
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
     void render(float *output, std::size_t frames) noexcept {
+        const uint64_t blockStart = renderedFrame;
         Command cmd;
-        // Audition/NoteOff carry a sample offset and are applied mid-block,
-        // at the exact frame they target, instead of all at the block start.
-        std::array<TimedCommand, 31> timed{};
-        unsigned timedCount = 0;
+        // Live events can target a future absolute frame. Keep them sorted in
+        // a fixed audio-thread-owned array until their frame enters a block.
         for (unsigned count = 0; count < 31 && commands.pop(cmd); count++)
             switch (cmd.action) {
             case Action::Restore:
@@ -207,10 +243,13 @@ class Engine {
             case Action::Audition:
             case Action::MidiInput:
             case Action::NoteOff:
-                cmd.frameOffset =
-                    frames > 0 ? std::min<unsigned>(cmd.frameOffset, unsigned(frames) - 1) : 0;
-                timed[timedCount++] = {cmd.action, cmd.track, cmd.pitch, cmd.velocity,
-                                       cmd.frameOffset};
+                enqueueTimed({cmd.action, cmd.track, cmd.pitch, cmd.velocity,
+                              cmd.hasTargetFrame
+                                  ? cmd.targetFrame
+                                  : blockStart + (frames > 0
+                                                      ? std::min<uint64_t>(cmd.frameOffset,
+                                                                           frames - 1)
+                                                      : 0)});
                 break;
             case Action::SwapPlugin: {
                 ClapHost *old = pluginHost;
@@ -228,26 +267,13 @@ class Engine {
         const bool solo = std::any_of(project.tracks.begin(), project.tracks.end(),
                                       [](auto &t) { return t.solo; });
         for (std::size_t n = 0; n < frames; n++) {
-            for (unsigned i = 0; i < timedCount; i++)
-                if (timed[i].frameOffset == n) {
-                    if (timed[i].track == int(Tracks)) {
-                        // The CLAP plugin bus: not part of the 6-track step
-                        // sequencer, addressed by the sentinel track index.
-                        if (pluginHost) {
-                            if (timed[i].action == Action::Audition ||
-                                timed[i].action == Action::MidiInput)
-                                pluginHost->noteOn(timed[i].pitch, timed[i].velocity, unsigned(n));
-                            else
-                                pluginHost->noteOff(timed[i].pitch, unsigned(n));
-                        }
-                    } else if (timed[i].action == Action::MidiInput)
-                        instruments.midiNoteOn(timed[i].track, timed[i].pitch,
-                                               timed[i].velocity);
-                    else if (timed[i].action == Action::Audition)
-                        trigger(timed[i].track, timed[i].pitch, timed[i].velocity);
-                    else
-                        instruments.noteOff(timed[i].track, timed[i].pitch);
-                }
+            while (pendingTimedCount && pendingTimed[0].targetFrame <= blockStart + n) {
+                const auto event = pendingTimed[0];
+                for (unsigned i = 1; i < pendingTimedCount; i++)
+                    pendingTimed[i - 1] = pendingTimed[i];
+                pendingTimedCount--;
+                dispatchTimed(event, static_cast<unsigned>(n));
+            }
             if (playing && double(frame) >= nextStep) {
                 step = (step + 1) % Steps;
                 if (step == 0)
@@ -312,6 +338,7 @@ class Engine {
                 frame++;
             if (playing)
                 midiTickPosition += double(project.bpm) * TicksPerQuarter / (60.0 * rate);
+            renderedFrame++;
         }
         // Mixed in after the per-sample loop, at block rate rather than the
         // per-sample master smoothing above: a CLAP plugin renders its own
@@ -327,6 +354,7 @@ class Engine {
         transportTick.store(
             playing ? static_cast<uint64_t>(midiTickPosition) : 0,
             std::memory_order_relaxed);
+        renderedFrameSnapshot.store(renderedFrame, std::memory_order_relaxed);
     }
 };
 } // namespace eco

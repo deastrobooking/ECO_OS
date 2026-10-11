@@ -141,9 +141,12 @@ does not expose a device selector. MIDI routing is explicit: list ports with
 `aconnect -l`, then connect the controller's numeric source port to the
 `ECO Controller:Input` destination. Arm capture and play notes. Capture stores
 polyphonic notes in the selected clip, quantizes starts to the current step,
-and measures duration from the engine tick; ALSA timestamps are not yet mapped
-to sample offsets, so this is not sample-accurate recording. The editor still
-shows a 16-step view; use the portable project event schema for note details.
+and measures duration from the engine tick. Absolute ALSA queue timestamps are
+mapped to engine sample frames for live note commands when available. Events
+that arrive after their target frame run at the next available sample, and
+capture itself remains step/tick quantized; measure end-to-end timing on the
+target before claiming sample-accurate recording. The editor still shows a
+16-step view; use the portable project event schema for note details.
 
 Default requested graph quantum is 256 at 48 kHz. Test 128/64 using a temporary
 PipeWire metadata force-quantum setting in the owned session, observe the actual

@@ -22,7 +22,7 @@ code audit; that document now governs product ordering.
 | Audio | PipeWire + WirePlumber + ALSA | Native PipeWire stream; JACK, ALSA and Pulse compatibility packages. One owned audio session. |
 | DSP | LIGHT C11 instruments + C++20 host | Preserve useful synthesis; bounded commands; audio-thread ownership. |
 | SIMD | LIGHT AArch64 NEON + scalar reference | Source-portable fallback on x86/ARMv7. Add optional AVX2 or ARMv7 NEON only behind equivalence tests and CPU dispatch. |
-| MIDI | ALSA sequencer initially | MIDI 1.0 input/output; fixed-capacity polyphonic note clips are underway, with timestamp conversion and MIDI output still pending. |
+| MIDI | ALSA sequencer initially | MIDI 1.0 input/output; fixed-capacity polyphonic note clips and absolute input timestamp-to-frame scheduling are implemented, pending Linux hardware validation; MIDI output remains pending. |
 | Projects | Versioned JSON + Qt QSaveFile | Strictly validated, atomically replaced local file. No database in the callback. |
 | Plugins | CLAP first; LV2 then VST3 | Implement later behind process isolation; each binary must match host ISA/ABI. |
 | Updates | RAUC A/B after hardware/image acceptance | Not implemented in this developer image. Needs board bootloader integration and a persistent data layout. |
@@ -106,10 +106,12 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
 1. **MIDI/CV sequencing is the product-critical next feature.** The first code
    slice now adds fixed-capacity polyphonic note clips and tick-based playback;
    armed MIDI capture preserves pitch, channel, velocity, and note duration,
-   with starts quantized to the active step. Next add PipeWire/ALSA timestamp
-   conversion to sample offsets, explicit MIDI output, and immutable project
-   snapshots so the growing project is not copied through the callback queue.
-   Design the CV device interface alongside this work and choose the first
+   with starts quantized to the active step. Absolute ALSA timestamps now map
+   through a PipeWire/monotonic clock anchor into a fixed audio-thread event
+   scheduler; validate alignment and late-event behavior on hardware. Next add
+   explicit MIDI output and immutable project snapshots so the growing project
+   is not copied through the callback queue. Design the CV device interface
+   alongside this work and choose the first
    external DAC/controller before claiming CV hardware support. Details and
    gates are in [ROADMAP.md](ROADMAP.md).
 2. Build the x86 image and Qt host on Linux; fix parse/package/build issues from
