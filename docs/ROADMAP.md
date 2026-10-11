@@ -5,6 +5,10 @@ for modern x86-64 mini PCs and Raspberry Pi class ARM64 systems. The initial
 product must make MIDI and control-voltage sequencing dependable before it
 tries to match the breadth of Ableton Live. Treat feature parity as a long-term
 compatibility goal, not a claim about the current six-track prototype.
+The portable native engine boundary and source-adaptation rules are defined in
+[NATIVE-ENGINE.md](NATIVE-ENGINE.md): reuse ideas and musical behavior from
+workspace projects, while implementing ECO runtime code without JUCE or host
+framework dependencies.
 
 ## What the code does today
 
@@ -50,7 +54,7 @@ compatibility goal, not a claim about the current six-track prototype.
 | B. MIDI-first sequencer | Polyphonic note clips with start, duration, pitch, velocity, channel, and stable event identity; step, piano-roll, and live-recording edit paths; tempo, meter, swing, probability, ratchets, ties; MIDI learn and routing | Save/reload preserves overlapping notes and expressive data; MIDI recording/playback is sample-aligned; clip launch and loop boundaries are deterministic |
 | C. CV/Gate sequencing | Hardware abstraction for CV devices; clocked pitch/gate/modulation lanes; calibrated scale and voltage profiles; clock/reset/run I/O; deterministic output scheduling | Reference DAC/controller selected and documented; measured timing/jitter, pitch error, voltage safety, hotplug, and overload behavior pass on target boards |
 | D. Audio production core | Multi-device aware audio graph; audio input and recording; tracks, buses, sends, gain/pan, automation, latency reporting/compensation, metering, sample playback and time-stretch decision | Session round trips and renders match; capture/playback sync measured; graph changes do not glitch under the published workload |
-| E. Native instruments and CLAP | ECO plugin ABI for owned DSP modules, then a conforming in-process CLAP host; plugin discovery, multiple instances, parameter mapping/automation, state, ports, transport, bypass, crash reporting | CLAP validator/reference fixtures; all plugin lifecycle calls on specified threads; project restores plugin state; plugin failures cannot corrupt host state |
+| E. Native instruments and CLAP | ECO device contract for owned DSP modules; portable instruments/effects in the native graph; thin CLAP export adapters; then a conforming in-process CLAP host with discovery, parameters/automation, state, ports, transport, bypass and failure handling | Native devices render consistently across supported targets within documented tolerances; project restores device state; CLAP validator/reference fixtures pass; plugin failures cannot corrupt host state |
 | F. Arrangement and workflow depth | Song timeline, follow actions, scenes, comping/undo, editing tools, MIDI/audio import/export, templates and recovery | Documented project interchange and workflow acceptance set; reliable long-session editing and recovery |
 | G. Platform qualification | Reproducible x86-64 and Pi images, board-specific RT options, update/recovery, thermal and power testing | 60-minute stress tests, measured end-to-end latency, xrun log, temperature/power and supported-interface matrix per release |
 
@@ -77,6 +81,22 @@ CV is a first-class sequencer destination, but not an implicit Pi GPIO feature.
 Start with a transport/device interface and one supported external DAC or
 controller. Keep software lanes portable across hardware; put voltage mapping,
 calibration, gate polarity and device limits in the hardware profile.
+
+## Portable native devices
+
+ECO owns its low-level DAW and groovebox methods. Existing VSTS workspace
+projects inform workflow, sound design and algorithm choices; JUCE-, Max- and
+host-specific implementations stay outside the ECO runtime. Reimplement
+selected behavior against a versioned, bounded native device interface. Keep
+the engine independent from Qt, PipeWire, ALSA and plugin SDKs; use adapters at
+those boundaries. The detailed contract, real-time constraints and extraction
+sequence are in [NATIVE-ENGINE.md](NATIVE-ENGINE.md).
+
+The Bitwig/Ableton/Reaktor direction maps to one native project/runtime model:
+clips and scenes with an arrangement view, track device chains and modulation,
+and constrained patch graphs inside devices. These are workflow layers over one
+transport and audio graph, not separate engines. Develop the graph and native
+device contract before exposing arbitrary user-patched topologies.
 
 ## Explicit non-goals for the first usable instrument
 

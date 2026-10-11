@@ -21,10 +21,11 @@ code audit; that document now governs product ordering.
 | Display | Weston kiosk / Wayland + Qt Quick | Native touch-capable interface, C++ integration; no desktop shell. |
 | Audio | PipeWire + WirePlumber + ALSA | Native PipeWire stream; JACK, ALSA and Pulse compatibility packages. One owned audio session. |
 | DSP | LIGHT C11 instruments + C++20 host | Preserve useful synthesis; bounded commands; audio-thread ownership. |
+| Native instruments | ECO-owned portable device modules | Adapt musical behavior from workspace projects; keep JUCE/Qt/ALSA/PipeWire and plugin SDKs out of the engine. See [native engine boundary](NATIVE-ENGINE.md). |
 | SIMD | LIGHT AArch64 NEON + scalar reference | Source-portable fallback on x86/ARMv7. Add optional AVX2 or ARMv7 NEON only behind equivalence tests and CPU dispatch. |
 | MIDI | ALSA sequencer initially | MIDI 1.0 input/output; fixed-capacity polyphonic clips, absolute input timestamp-to-frame scheduling, and a sequencer output port are implemented, pending Linux hardware validation. |
 | Projects | Versioned JSON + Qt QSaveFile | Strictly validated, atomically replaced local file. No database in the callback. |
-| Plugins | CLAP first; LV2 then VST3 | Implement later behind process isolation; each binary must match host ISA/ABI. |
+| Plugins | Native ECO devices first; CLAP adapters and host afterward | ECO devices run in the owned graph; CLAP export is a thin interoperability wrapper. Third-party plugin hosting follows after lifecycle, graph, state and failure handling are sound. Each binary matches host ISA/ABI. |
 | Updates | RAUC A/B after hardware/image acceptance | Not implemented in this developer image. Needs board bootloader integration and a persistent data layout. |
 
 ## Architecture
@@ -140,6 +141,10 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
    QML can be iterated and tested on the macOS/Linux dev host without
    PipeWire/ALSA. UI additions follow the milestone dependencies listed there,
    not ad-hoc.
+8. Use [NATIVE-ENGINE.md](NATIVE-ENGINE.md) when adapting sibling workspace
+   projects: port the musical behavior into portable ECO modules, with no JUCE
+   dependency in the native engine. Start by fitting LIGHT to the device
+   contract, then select one drum instrument or synth for extraction.
 
 ## Research basis
 
