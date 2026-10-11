@@ -41,6 +41,7 @@ flowchart LR
   CMD --> ENG[Engine<br/>audio thread]
   ENG -->|std::atomic telemetry<br/>step, active clips, stream state| QML
   MIDI[ALSA sequencer<br/>QSocketNotifier] --> QML
+  ENG -->|bounded MIDI event queue| OUT[ALSA output<br/>controller timer]
 ```
 
 - UI → audio: only `eco::Command` values through `Engine::commands`. A full

@@ -36,9 +36,11 @@ class Controller : public QObject {
     eco::Project project = eco::demo();
     std::unique_ptr<Audio> audio;
     QTimer timer;
+    QTimer midiOutputTimer;
     snd_seq_t *midi = nullptr;
     int midiQueue = -1;
     int midiPort = -1;
+    int midiOutputPort = -1;
     bool midiQueueRunning = false;
     std::vector<QSocketNotifier *> midiNotifiers;
     int selected_ = 0, scene_ = 0;
@@ -51,6 +53,38 @@ class Controller : public QObject {
     bool playing_ = false, armed_ = false;
     QString message_ = "Select a clip. Make something.";
     QString name_ = "First light";
+    void drainMidiOutput() {
+        if (!midi || midiOutputPort < 0)
+            return;
+        eco::MidiOutEvent event;
+        while (engine.midiOutput.pop(event)) {
+            snd_seq_event_t out{};
+            snd_seq_ev_clear(&out);
+            snd_seq_ev_set_source(&out, midiOutputPort);
+            snd_seq_ev_set_subs(&out);
+            snd_seq_ev_set_direct(&out);
+            snd_seq_ev_set_fixed(&out);
+            if (event.kind == eco::MidiOutKind::NoteOn)
+                snd_seq_ev_set_noteon(&out, event.channel, event.pitch, event.velocity);
+            else
+                snd_seq_ev_set_noteoff(&out, event.channel, event.pitch, event.velocity);
+            snd_seq_event_output_direct(midi, &out);
+        }
+    }
+    void sendMidiPanic() {
+        if (!midi || midiOutputPort < 0)
+            return;
+        for (int channel = 0; channel < 16; channel++) {
+            snd_seq_event_t out{};
+            snd_seq_ev_clear(&out);
+            snd_seq_ev_set_source(&out, midiOutputPort);
+            snd_seq_ev_set_subs(&out);
+            snd_seq_ev_set_direct(&out);
+            snd_seq_ev_set_fixed(&out);
+            snd_seq_ev_set_controller(&out, channel, 123, 0); // All Notes Off
+            snd_seq_event_output_direct(midi, &out);
+        }
+    }
     bool send(eco::Command command) {
         if (engine.commands.push(command))
             return true;
@@ -225,7 +259,7 @@ class Controller : public QObject {
         } catch (const std::exception &e) {
             message_ = QString::fromUtf8(e.what());
         }
-        if (snd_seq_open(&midi, "default", SND_SEQ_OPEN_INPUT, SND_SEQ_NONBLOCK) >= 0) {
+        if (snd_seq_open(&midi, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) >= 0) {
             snd_seq_set_client_name(midi, "ECO Controller");
             midiQueue = snd_seq_alloc_named_queue(midi, "ECO MIDI input clock");
             if (midiQueue >= 0 && snd_seq_start_queue(midi, midiQueue, nullptr) >= 0 &&
@@ -233,6 +267,9 @@ class Controller : public QObject {
                 midiQueueRunning = true;
             midiPort = snd_seq_create_simple_port(
                 midi, "Input", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+                SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+            midiOutputPort = snd_seq_create_simple_port(
+                midi, "Output", SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ,
                 SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
             // Ask ALSA to stamp received events against our running real-time
             // queue. If timestamp support is unavailable, commands retain the
@@ -260,6 +297,12 @@ class Controller : public QObject {
                     midiNotifiers.push_back(notifier);
                 }
             }
+            if (midiOutputPort >= 0) {
+                connect(&midiOutputTimer, &QTimer::timeout, this,
+                        [this] { drainMidiOutput(); });
+                midiOutputTimer.setTimerType(Qt::PreciseTimer);
+                midiOutputTimer.start(1);
+            }
         } else
             midi = nullptr;
         // The timer now only drives UI refresh (playhead/status); MIDI input
@@ -276,6 +319,11 @@ class Controller : public QObject {
     }
     ~Controller() {
         timer.stop();
+        midiOutputTimer.stop();
+        // Stop the producer before draining/closing the ALSA sequencer.
+        audio.reset();
+        drainMidiOutput();
+        sendMidiPanic();
         if (auto *old = engine.retiredPlugin.exchange(nullptr, std::memory_order_acquire))
             delete old;
         for (auto *notifier : midiNotifiers)
@@ -307,12 +355,16 @@ class Controller : public QObject {
         return project.bpm;
     }
     QString status() const {
-        if (!audio)
-            return "Audio unavailable";
-        const auto state = audio->state.load();
-        return state == PW_STREAM_STATE_STREAMING ? "PIPEWIRE · 48 kHz · STEREO"
-               : state == PW_STREAM_STATE_ERROR   ? "PipeWire error — check interface and restart"
-                                                  : "Waiting for PipeWire / audio device";
+        QString result = !audio ? "Audio unavailable"
+                        : audio->state.load() == PW_STREAM_STATE_STREAMING
+                            ? "PIPEWIRE · 48 kHz · STEREO"
+                        : audio->state.load() == PW_STREAM_STATE_ERROR
+                            ? "PipeWire error — check interface and restart"
+                            : "Waiting for PipeWire / audio device";
+        const auto dropped = engine.droppedMidiOutput.load(std::memory_order_relaxed);
+        if (dropped)
+            result += " · MIDI OUT DROPPED " + QString::number(qulonglong(dropped));
+        return result;
     }
     QString message() const {
         return message_;

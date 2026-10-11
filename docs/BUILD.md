@@ -148,6 +148,17 @@ capture itself remains step/tick quantized; measure end-to-end timing on the
 target before claiming sample-accurate recording. The editor still shows a
 16-step view; use the portable project event schema for note details.
 
+For sequencer output, connect the app's `Output` source port to an instrument
+or MIDI interface destination, for example:
+
+```sh
+aconnect "ECO Controller:Output" "DEVICE:PORT"
+```
+
+The app publishes clip note events through that port. Current output draining
+runs on a 1 ms Qt timer; external MIDI timing has not yet been measured or
+compensated.
+
 Default requested graph quantum is 256 at 48 kHz. Test 128/64 using a temporary
 PipeWire metadata force-quantum setting in the owned session, observe the actual
 quantum in `pw-top`, and restore automatic policy afterwards. Do not label a

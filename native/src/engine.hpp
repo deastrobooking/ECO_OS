@@ -121,6 +121,11 @@ struct TimedCommand {
     float velocity = .8f;
     uint64_t targetFrame = 0;
 };
+enum class MidiOutKind : uint8_t { NoteOn, NoteOff };
+struct MidiOutEvent {
+    MidiOutKind kind = MidiOutKind::NoteOff;
+    uint8_t channel = 0, pitch = 60, velocity = 0;
+};
 class Engine {
     LightInstruments instruments;
     Project project = demo();
@@ -142,6 +147,28 @@ class Engine {
     // step sequencer. Deleted by ~Engine(), which only runs once the audio
     // callback has stopped (Controller destructs Audio before Engine).
     ClapHost *pluginHost = nullptr;
+    void emitMidi(MidiOutKind kind, int channel, int pitch, float velocity = 0) noexcept {
+        const auto scaledVelocity = static_cast<uint8_t>(
+            std::clamp(int(std::lround(std::clamp(velocity, 0.f, 1.f) * 127.f)), 0, 127));
+        if (!midiOutput.push({kind, static_cast<uint8_t>(std::clamp(channel, 0, 15)),
+                              static_cast<uint8_t>(std::clamp(pitch, 0, 127)),
+                              scaledVelocity}))
+            droppedMidiOutput.fetch_add(1, std::memory_order_relaxed);
+    }
+    void emitTrackNotesOff(unsigned track) noexcept {
+        const auto clipIndex = static_cast<unsigned>(std::clamp(active[track], 0, 3));
+        const auto &midiClip = project.tracks[track].midiClips[clipIndex];
+        if (midiClip.noteCount > 0) {
+            for (unsigned i = 0; i < std::min<unsigned>(midiClip.noteCount, MaxClipNotes); i++) {
+                const auto &note = midiClip.notes[i];
+                emitMidi(MidiOutKind::NoteOff, note.channel, note.pitch);
+            }
+        } else {
+            for (const auto &note : project.tracks[track].clips[clipIndex])
+                if (note.velocity > 0)
+                    emitMidi(MidiOutKind::NoteOff, 0, note.pitch);
+        }
+    }
     void trigger(int track, int pitch, float velocity) noexcept {
         if (track < 0 || track >= int(Tracks))
             return;
@@ -178,10 +205,14 @@ class Engine {
 
   public:
     Queue<Command, 32> commands;
+    // Audio thread produces clip events; the controller drains and sends them
+    // through ALSA. No ALSA calls or allocations occur in render().
+    Queue<MidiOutEvent, 2048> midiOutput;
     std::atomic<int> currentStep{-1};
     std::atomic<uint64_t> transportTick{0};
     std::atomic<uint64_t> renderedFrameSnapshot{0};
     std::atomic<uint64_t> droppedTimedEvents{0};
+    std::atomic<uint64_t> droppedMidiOutput{0};
     std::atomic<unsigned> activeClips{0};
     // Set by render() when SwapPlugin replaces an already-installed plugin.
     // The control thread must exchange this back to nullptr and delete what
@@ -202,6 +233,8 @@ class Engine {
         for (unsigned count = 0; count < 31 && commands.pop(cmd); count++)
             switch (cmd.action) {
             case Action::Restore:
+                for (unsigned i = 0; i < Tracks; i++)
+                    emitTrackNotesOff(i);
                 project = cmd.project;
                 for (unsigned i = 0; i < Tracks; i++)
                     active[i] = std::clamp(cmd.active[i], 0, 3);
@@ -226,6 +259,8 @@ class Engine {
                 lastMidiTick = UINT64_MAX;
                 break;
             case Action::Stop:
+                for (unsigned i = 0; i < Tracks; i++)
+                    emitTrackNotesOff(i);
                 playing = false;
                 step = -1;
                 pending.fill(-1);
@@ -279,6 +314,7 @@ class Engine {
                 if (step == 0)
                     for (unsigned i = 0; i < Tracks; i++)
                         if (pending[i] >= 0) {
+                            emitTrackNotesOff(i);
                             instruments.allNotesOff(i);
                             active[i] = pending[i];
                             pending[i] = -1;
@@ -299,26 +335,58 @@ class Engine {
                     // Release first so a repeated pitch can retrigger cleanly
                     // when one note ends on the same tick another begins.
                     for (unsigned i = 0; i < Tracks; i++) {
-                        const auto &clip = project.tracks[i].midiClips[active[i]];
-                        if (clip.loopTicks == 0)
-                            continue;
-                        const auto clipTick = unsigned(tick % clip.loopTicks);
-                        for (unsigned j = 0; j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
-                            const auto &note = clip.notes[j];
-                            if ((unsigned(note.startTick) + note.durationTicks) % clip.loopTicks ==
-                                clipTick)
-                                instruments.noteOff(i, note.pitch);
+                        const auto &track = project.tracks[i];
+                        const auto &clip = track.midiClips[active[i]];
+                        if (clip.noteCount > 0) {
+                            if (clip.loopTicks == 0)
+                                continue;
+                            const auto clipTick = unsigned(tick % clip.loopTicks);
+                            for (unsigned j = 0;
+                                 j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
+                                const auto &note = clip.notes[j];
+                                if ((unsigned(note.startTick) + note.durationTicks) %
+                                        clip.loopTicks == clipTick) {
+                                    instruments.noteOff(i, note.pitch);
+                                    emitMidi(MidiOutKind::NoteOff, note.channel, note.pitch);
+                                }
+                            }
+                        } else {
+                            const auto &legacy = track.clips[active[i]];
+                            const unsigned clipTick = unsigned(tick % DefaultClipTicks);
+                            if (clipTick % TicksPerStep != 0)
+                                continue;
+                            const unsigned endedStep =
+                                (clipTick / TicksPerStep + Steps - 1) % Steps;
+                            const auto &note = legacy[endedStep];
+                            if (note.velocity > 0)
+                                emitMidi(MidiOutKind::NoteOff, 0, note.pitch);
                         }
                     }
                     for (unsigned i = 0; i < Tracks; i++) {
-                        const auto &clip = project.tracks[i].midiClips[active[i]];
-                        if (clip.loopTicks == 0)
-                            continue;
-                        const auto clipTick = unsigned(tick % clip.loopTicks);
-                        for (unsigned j = 0; j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
-                            const auto &note = clip.notes[j];
-                            if (note.startTick == clipTick)
-                                instruments.midiNoteOn(i, note.pitch, note.velocity);
+                        const auto &track = project.tracks[i];
+                        const auto &clip = track.midiClips[active[i]];
+                        if (clip.noteCount > 0) {
+                            if (clip.loopTicks == 0)
+                                continue;
+                            const auto clipTick = unsigned(tick % clip.loopTicks);
+                            for (unsigned j = 0;
+                                 j < std::min<unsigned>(clip.noteCount, MaxClipNotes); j++) {
+                                const auto &note = clip.notes[j];
+                                if (note.startTick == clipTick) {
+                                    instruments.midiNoteOn(i, note.pitch, note.velocity);
+                                    if (!track.mute && (!solo || track.solo))
+                                        emitMidi(MidiOutKind::NoteOn, note.channel, note.pitch,
+                                                 note.velocity);
+                                }
+                            }
+                        } else {
+                            const unsigned clipTick = unsigned(tick % DefaultClipTicks);
+                            if (clipTick % TicksPerStep == 0) {
+                                const unsigned startedStep = clipTick / TicksPerStep;
+                                const auto &note = track.clips[active[i]][startedStep];
+                                if (note.velocity > 0 && !track.mute && (!solo || track.solo))
+                                    emitMidi(MidiOutKind::NoteOn, 0, note.pitch, note.velocity);
+                            }
                         }
                     }
                 }

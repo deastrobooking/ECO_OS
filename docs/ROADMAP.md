@@ -12,8 +12,12 @@ compatibility goal, not a claim about the current six-track prototype.
   instrument. The legacy step grid remains, and each track/scene now also has a
   fixed 128-note MIDI event clip with 960 PPQ timing, pitch, channel, velocity,
   start, duration, and loop length. The engine schedules note starts/releases
-  from its sample counter. The UI still has only the 16-step editor; there is
-  no piano roll, MIDI output, automation lane, arrangement timeline, or CV.
+  from its sample counter and publishes note events to an ALSA output port.
+  The controller drains a bounded queue on a 1 ms Qt timer and writes MIDI
+  events outside the audio callback. Output timing and overflow need hardware
+  validation; there is no output port selector or MIDI hardware latency
+  compensation. The UI still has only the 16-step editor; there is no piano
+  roll, automation lane, arrangement timeline, or CV.
 - ALSA MIDI input is event-driven on the Qt control thread. The audio callback
   pairs its absolute sample frame with PipeWire and monotonic clock readings;
   absolute ALSA queue timestamps are mapped to engine frames and held in a
@@ -94,6 +98,10 @@ calibration, gate polarity and device limits in the hardware profile.
   queue time and maps them through the PipeWire anchor; unsupported or late
   events use next-block/next-sample fallback behavior. Relative stamps and
   timestamp edge cases still need ALSA-device validation.
+- MIDI clip and legacy step notes reach `ECO Controller:Output` when a client
+  is connected with `aconnect`. Engine-to-controller transport is bounded and
+  nonblocking; ALSA sends occur on the controller thread. The current 1 ms
+  drain cadence is a prototype and does not guarantee 1 ms output timing.
 - CLAP requires hosts to respect each method's thread specification. The
   current processing start/stop calls violate that contract. Its fundamental
   integration surface also includes state, params, audio ports, note ports,
