@@ -106,6 +106,9 @@ Qt, Pi and Qualcomm revisions before it replaces this baseline.
 
 ## Immediate developer backlog
 
+The ranked defect list and the P0–P3 improvement plan from the 2026-10-10 code
+review are in [REVIEW.md](REVIEW.md); it refines the items below.
+
 1. **MIDI/CV sequencing is the product-critical next feature.** The first code
    slice now adds fixed-capacity polyphonic note clips and tick-based playback;
    armed MIDI capture preserves pitch, channel, velocity, and note duration,

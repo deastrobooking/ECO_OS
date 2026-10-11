@@ -3,6 +3,9 @@
 #include "engine.hpp"
 #include <charconv>
 #include <cmath>
+#include <iomanip>
+#include <limits>
+#include <locale>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -187,9 +190,13 @@ class Parser {
                (std::isdigit(static_cast<unsigned char>(s[i])) || s[i] == '.' || s[i] == 'e' ||
                 s[i] == 'E' || s[i] == '+' || s[i] == '-'))
             i++;
+        // Floating-point std::from_chars is missing from older libc++; a
+        // classic-locale stream is portable and locale-independent.
+        std::istringstream in{std::string(s.substr(start, i - start))};
+        in.imbue(std::locale::classic());
         double value = 0;
-        auto [ptr, ec] = std::from_chars(s.data() + start, s.data() + i, value);
-        if (ec != std::errc() || ptr != s.data() + i) {
+        in >> value;
+        if (in.fail() || in.peek() != std::char_traits<char>::eof()) {
             fail();
             return 0;
         }
@@ -290,9 +297,22 @@ class Parser {
 };
 
 inline void writeFloat(std::ostringstream &out, float value) {
-    char buf[32];
-    auto [ptr, ec] = std::to_chars(buf, buf + sizeof buf, value);
-    out.write(buf, ptr - buf);
+    // Shortest decimal that round-trips the float (as to_chars would give);
+    // classic locale keeps '.' decimals.
+    std::string best;
+    for (int digits = 1; digits <= std::numeric_limits<float>::max_digits10; digits++) {
+        std::ostringstream text;
+        text.imbue(std::locale::classic());
+        text << std::setprecision(digits) << value;
+        best = text.str();
+        std::istringstream back(best);
+        back.imbue(std::locale::classic());
+        float parsed = 0;
+        back >> parsed;
+        if (parsed == value || !std::isfinite(value))
+            break;
+    }
+    out << best;
 }
 
 inline void writeEscaped(std::ostringstream &out, std::string_view text) {

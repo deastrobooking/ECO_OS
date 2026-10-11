@@ -10,6 +10,9 @@ float peak_abs_scalar(const float *, uint32_t);
 void soft_clip_scalar(float *, uint32_t, float);
 }
 static bool forbidAllocation = false;
+// ASan interposes malloc/new itself and aborts if a replacement operator new
+// runs during its init (macOS); check-core.sh runs the guard unsanitized.
+#ifndef ECO_NO_ALLOC_GUARD
 void *operator new(std::size_t n) {
     if (forbidAllocation) {
         std::fprintf(stderr, "Allocation in audio render\n");
@@ -28,6 +31,7 @@ void *operator new[](std::size_t n) {
 void operator delete[](void *p) noexcept {
     std::free(p);
 }
+#endif
 static void check(bool condition, const char *message) {
     if (!condition) {
         std::fprintf(stderr, "FAIL: %s\n", message);
@@ -100,7 +104,7 @@ int main() {
     check(q.pop(value) && value == 2 && q.pop(value) && value == 3 && q.pop(value) && value == 4 &&
               !q.pop(value),
           "queue drain");
-    eco::Engine e;
+    static eco::Engine e; // ~1.3 MB: keep off the stack
     std::array<float, 256> block{};
     render(e, block.data(), 128);
     for (auto v : block)
@@ -158,7 +162,7 @@ int main() {
           "restore selects all clips atomically");
     for (auto v : block)
         check(v == 0, "restore silences old voices");
-    eco::Engine first, second;
+    static eco::Engine first, second; // ~1.3 MB: keep off the stack
     c.action = eco::Action::Start;
     first.commands.push(c);
     second.commands.push(c);
@@ -170,7 +174,7 @@ int main() {
     {
         // Audition scheduled mid-block: exact silence strictly before its
         // frameOffset, audible output at/after it.
-        eco::Engine timed;
+        static eco::Engine timed; // ~1.3 MB: keep off the stack
         eco::Command audition;
         audition.action = eco::Action::Audition;
         audition.track = 4;
@@ -193,7 +197,7 @@ int main() {
         // Scheduling follows frameOffset, not push order: NoteOff (offset 50)
         // pushed before Audition (offset 0) must still let the note sound
         // first and release after it, not the reverse.
-        eco::Engine ordering;
+        static eco::Engine ordering; // ~1.3 MB: keep off the stack
         eco::Command noteOff;
         noteOff.action = eco::Action::NoteOff;
         noteOff.track = 4;
@@ -219,7 +223,7 @@ int main() {
     {
         // A frameOffset beyond the block is clamped to the last valid frame,
         // not left to silently drop or index out of bounds.
-        eco::Engine clamped;
+        static eco::Engine clamped; // ~1.3 MB: keep off the stack
         eco::Command audition;
         audition.action = eco::Action::Audition;
         audition.track = 4;

@@ -7,6 +7,8 @@ Ableton, or platform-specific host code is not part of the ECO runtime.
 
 ## Portability contract
 
+- Known violation: `engine.hpp` currently includes `clap_host.hpp` (and thus the
+  CLAP SDK and `dlopen`). See [REVIEW.md](REVIEW.md) finding 9.
 - The engine and owned instruments build as portable C/C++ without JUCE, Qt,
   ALSA, PipeWire, or a plugin SDK dependency. The current LIGHT C DSP is a
   starting point for this boundary; it is not yet the complete module API.

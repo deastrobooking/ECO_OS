@@ -24,7 +24,7 @@ Current screens (all in one window, one ColumnLayout):
 | Transport | Play toggle, Stop, Capture-MIDI arm, tempo SpinBox (40–240), step position readout | Two stop paths (toggle + stop) are redundant. "4:4 / 1 BAR QUANTIZE" is a static label, not a control. No time-signature model exists. |
 | Session grid | 7×4 grid: 6 colored tracks + a "SCENES" column, clip launch buttons | Launches are bar-quantized by the engine. 4 scenes is an engine constant (`Scenes = 4`), not a UI limit. |
 | Mixer strip | Per-track mute button, volume % label, slider (0–1) | Engine `Track` has `solo` and `Project` has `master`; neither is exposed in the UI. No level meters. |
-| Clip editor | Selected track/scene label, Audition button, 16 step toggles | Steps are binary on/off. No velocity, pitch, length, or micro-timing editing. Project model stores one `{pitch, velocity}` per step; duration/polyphony are not representable (see [PLAN.md](PLAN.md) backlog item 3). |
+| Clip editor | Selected track/scene label, Audition button, 16 step toggles | Steps are binary on/off. No velocity, pitch, length, or micro-timing editing. The legacy step model stores one `{pitch, velocity}` per step, but the engine now also holds 128-note polyphonic MIDI clips with duration and channel (captured from MIDI input); the UI cannot display or edit them yet. |
 | Status bar | Free-text message, PipeWire state line, shortcut hints | Messages are single-string, no severity or history. |
 
 Input today: mouse/touch on controls, plus keyboard shortcuts Space (play),

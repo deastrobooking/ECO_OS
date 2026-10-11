@@ -23,7 +23,7 @@ boot and latency qualification still need a Linux build host and target boards.
 - Weston kiosk and supervised PipeWire/WirePlumber/application services.
 - Leonardo/Micro USB MIDI controller starter firmware.
 
-Read the [product roadmap](docs/ROADMAP.md), [implementation plan](docs/PLAN.md), [UI master document](docs/UI.md),
+Read the [code review and improvement plan](docs/REVIEW.md), [product roadmap](docs/ROADMAP.md), [implementation plan](docs/PLAN.md), [UI master document](docs/UI.md),
 [build guide](docs/BUILD.md), [LIGHT integration audit](docs/LIGHT-INTEGRATION.md), and
 [hardware acceptance checklist](docs/HARDWARE.md).
 
@@ -68,7 +68,7 @@ yocto/meta-eco-core/  shared distro, image, application and audio session policy
 yocto/meta-eco-bsp/   board/kernel integration boundary
 firmware/            USB MIDI controller firmware
 tools/               portable DSP and metadata checks
-docs/                decisions, plan, build and hardware validation
+docs/                decisions, review, plan, build and hardware validation
 ```
 
 The existing LIGHT `.light` session format, original raylib interface, sample

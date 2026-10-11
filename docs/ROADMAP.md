@@ -10,6 +10,8 @@ The portable native engine boundary and source-adaptation rules are defined in
 workspace projects, while implementing ECO runtime code without JUCE or host
 framework dependencies.
 
+Review findings and the ordered improvement plan are in [REVIEW.md](REVIEW.md).
+
 ## What the code does today
 
 - `Engine` renders six fixed tracks and one separately auditioned CLAP

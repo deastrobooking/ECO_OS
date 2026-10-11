@@ -1,6 +1,21 @@
 # Validation record
 
-Environment: Apple Silicon macOS, Apple Clang, 2026-09-21/22.
+Environment: Apple Silicon macOS, Apple Clang 15. Records below are from
+2026-09-21/22 unless marked 2026-10-10.
+
+## Re-run 2026-10-10 (see [REVIEW.md](REVIEW.md))
+
+- `tools/check-core.sh` was failing at HEAD: missing CLAP include path, then an
+  `engine_test` stack overflow (a 1.3 MB `Engine` per test scope). Both fixed.
+  The allocation guard now runs in a separate unsanitized pass because the
+  replacement `operator new` conflicts with ASan on macOS.
+- On this host the ASan runtime aborts even for an empty program, so the
+  2026-10-10 run executed **without** ASan/UBSan (the script now warns). Engine
+  tests pass in NEON and scalar modes; sanitizer coverage must be re-confirmed
+  on Linux.
+- `project_io_test` does not compile with Apple clang 15 (no floating-point
+  `std::from_chars`). Untested on this host until REVIEW.md item P0.3.
+- `clap_host_test` and the Qt/PipeWire/ALSA host were not run.
 
 ## Executed and passed
 
@@ -43,7 +58,7 @@ Environment: Apple Silicon macOS, Apple Clang, 2026-09-21/22.
   firmware compilation/flashing.
 - PREEMPT_RT hardware configuration, real-time privilege verification, callback
   latency distribution, xrun soak or physical round-trip measurement.
-- GitHub Actions workflows. They are provided, not remotely submitted here.
+- CI. No GitHub Actions workflows exist in the repository yet (REVIEW.md P0.1).
 - C-versus-Rust performance comparison. No Rust implementation was introduced.
 
 This repository has no flashable artifact yet. The next validation gate is a

@@ -166,7 +166,7 @@ configuration “64-frame certified” merely because a request was accepted.
 
 ## CI
 
-`.github/workflows/native.yml` describes Linux native compilation/QML startup,
-x86 scalar tests, ARM64 scalar/NEON tests and kas metadata checks. It has been
-written but not executed on GitHub in this session. Full Yocto builds belong on
-an adequately sized Linux runner; this change does not submit remote jobs.
+No CI workflow exists yet; `.github/workflows/` is absent. The planned jobs
+(Linux x86/ARM64 sanitizer tests, full Qt/PipeWire compile, kas metadata check)
+are item P0.1–P0.2 in [REVIEW.md](REVIEW.md). Full Yocto builds belong on an
+adequately sized Linux runner.
