@@ -17,7 +17,10 @@ Environment: Apple Silicon macOS, Apple Clang 15. Records below are from
   clang 15. Steps now derive from the MIDI tick clock; a tempo/tick lock test
   sweeps tempo mid-bar.
 - `cmake -DECO_CORE_ONLY=ON` + `ctest`: engine, project_io and clap_host pass.
-- The Qt/PipeWire/ALSA host was not compiled or run.
+- Project changes are immutable snapshots; engine test covers 1000 recycled
+  updates and a bounded unrendered burst. `Command` is 88 bytes.
+- The Qt/PipeWire/ALSA host (including its use of `submitProject`) was not
+  compiled or run.
 
 ## Executed and passed
 

@@ -28,6 +28,7 @@ Nothing here is a flashable or hardware-qualified artifact.
 | F7 | `eco-project-io-tests` in CMake lacked the CLAP include path. | Added; `ctest` (engine, project_io, clap_host) passes on macOS. |
 | F8 | Step grid and MIDI clips ran on two clocks (finding 1); tempo changes could split them. | Steps derive from the tick clock; BPM clamp applied to both; new tempo/tick lock test sweeps 45–240 BPM mid-bar. |
 | F9 | No CI. | `.github/workflows/native.yml` added (unexecuted; see P0). |
+| F10 | 40 KB `Project` copied through the command queue and onto the audio thread's stack. | `Command` carries a snapshot pointer (88 bytes; `Engine` 1.3 MB → 17 KB). `Engine::submitProject` allocates on the control thread; the audio thread swaps the pointer and returns the old one via `retiredProjects`; `reclaimProjects` frees it. In-flight snapshots are capped at 48 under a 64-slot retire queue, so the audio side never frees or fails. |
 | F5 | Docs claimed GitHub Actions workflows were provided. None exist. | Docs corrected; CI is plan item P1. |
 
 ## Open findings, ranked
@@ -40,7 +41,7 @@ Nothing here is a flashable or hardware-qualified artifact.
    BPM). A tempo change mid-bar, or accumulated rounding, lets them diverge, so
    bar-quantized launches (step 0) and MIDI clip loops can disagree. Unify on
    the tick clock and derive steps from ticks.
-2. **Whole-`Project` copies through the command queue.** Every toggle, volume
+2. **(Fixed, F10.) Whole-`Project` copies through the command queue.** Every toggle, volume
    or mute change copies 40 KB into a 1.3 MB queue; the audio thread copies it
    out (`item = items[r]`, plus the local `Command cmd`) on the render path.
    That is bounded but needlessly expensive in the callback and caps how large
@@ -56,9 +57,8 @@ Nothing here is a flashable or hardware-qualified artifact.
    PipeWire term (`eventPwNs - pwNs == monoDelta`), so the PipeWire clock adds
    nothing. Either use it (rate-match, detect quantum/xrun discontinuities) or
    drop it. Needs loopback measurement either way.
-5. **`NoteOff` for drums/legacy path is a no-op and FM legacy steps use a fixed
-   150 ms gate** (`releaseIn = 7200` frames), independent of tempo. Fine for a
-   prototype; incorrect for slow tempos or long steps.
+5. **(FM gate fixed.) `NoteOff` for drums is a no-op by design (one-shots).** Legacy FM
+   step gates are now 90% of a step at the current tempo; auditions keep 150 ms.
 6. **Pitch handling is inconsistent.** Instruments clamp to 24–96; MIDI output
    and clip storage use 0–127; capture stores raw pitch. Output and sound can
    disagree for out-of-range notes.
@@ -131,10 +131,10 @@ until the first CI run.
 | Item | Gate |
 |---|---|
 | P1.1 Single tick clock; steps derived from ticks; tempo changes keep every consumer aligned. | P0.4 passes; block-size invariance retained. |
-| P1.2 Delta commands + immutable project snapshots; shrink `Command` to a few dozen bytes; raise clip event cap. | `sizeof(Engine)` small enough to live on the stack; callback copy cost measured. |
+| P1.2 Immutable project snapshots with audio-thread adoption and control-thread reclamation (done, F10). Still open: raise the 128-note clip cap, which is now cheap to do. | Done: `Command` is 88 bytes and `Engine` 17 KB. Callback copy cost not separately benchmarked. |
 | P1.3 Dedicated MIDI output thread with queue-scheduled timestamps; port selection. | Loopback jitter recorded on x86 and Pi. |
 | P1.4 Latency-aware clock anchor; xrun and callback-time telemetry shown in UI. | Measured input→sound and MIDI-out offsets documented. |
-| P1.5 Unclamped, consistent pitch model; channel routing to built-in instruments; tempo-aware FM gate. | Round-trip save/reload and external MIDI match internal sound. |
+| P1.5 Unclamped, consistent pitch model; channel routing to built-in instruments; tempo-aware FM gate (done). | Round-trip save/reload and external MIDI match internal sound. |
 | P1.6 Unquantized capture option using tick position at event time. | Recorded timing matches played timing within one tick. |
 
 ### P2 — native device contract (Roadmap phase E)

@@ -96,7 +96,10 @@ template <class T, std::size_t N> class Queue {
 enum class Action { Update, Start, Stop, Launch, Audition, MidiInput, NoteOff, Restore, SwapPlugin };
 struct Command {
     Action action = Action::Stop;
-    Project project{};
+    // Immutable snapshot built on the control thread (Engine::submitProject).
+    // The audio thread adopts the pointer; the old one returns via
+    // Engine::retiredProjects. Keeps Command small: no 40 KB copies.
+    Project *snapshot = nullptr;
     std::array<int, Tracks> active{};
     int track = 0, clip = 0, pitch = 60;
     float velocity = .8f;
@@ -128,7 +131,10 @@ struct MidiOutEvent {
 };
 class Engine {
     LightInstruments instruments;
-    Project project = demo();
+    Project *project = new Project(demo());
+    // Control-thread only: snapshots allocated and not yet reclaimed.
+    unsigned projectsInFlight = 1;
+    static constexpr unsigned MaxProjectsInFlight = 48;
     std::array<float, Tracks> gains{};
     float master = 0;
     std::array<int, Tracks> active{}, pending{-1, -1, -1, -1, -1, -1};
@@ -147,6 +153,14 @@ class Engine {
     // step sequencer. Deleted by ~Engine(), which only runs once the audio
     // callback has stopped (Controller destructs Audio before Engine).
     ClapHost *pluginHost = nullptr;
+    void adoptProject(Project *next) noexcept {
+        if (!next)
+            return;
+        Project *old = project;
+        project = next;
+        // Capacity exceeds MaxProjectsInFlight, so this cannot fail.
+        retiredProjects.push(old);
+    }
     void emitMidi(MidiOutKind kind, int channel, int pitch, float velocity = 0) noexcept {
         const auto scaledVelocity = static_cast<uint8_t>(
             std::clamp(int(std::lround(std::clamp(velocity, 0.f, 1.f) * 127.f)), 0, 127));
@@ -157,22 +171,23 @@ class Engine {
     }
     void emitTrackNotesOff(unsigned track) noexcept {
         const auto clipIndex = static_cast<unsigned>(std::clamp(active[track], 0, 3));
-        const auto &midiClip = project.tracks[track].midiClips[clipIndex];
+        const auto &midiClip = project->tracks[track].midiClips[clipIndex];
         if (midiClip.noteCount > 0) {
             for (unsigned i = 0; i < std::min<unsigned>(midiClip.noteCount, MaxClipNotes); i++) {
                 const auto &note = midiClip.notes[i];
                 emitMidi(MidiOutKind::NoteOff, note.channel, note.pitch);
             }
         } else {
-            for (const auto &note : project.tracks[track].clips[clipIndex])
+            for (const auto &note : project->tracks[track].clips[clipIndex])
                 if (note.velocity > 0)
                     emitMidi(MidiOutKind::NoteOff, 0, note.pitch);
         }
     }
-    void trigger(int track, int pitch, float velocity) noexcept {
+    void trigger(int track, int pitch, float velocity, int gateFrames = 7200) noexcept {
         if (track < 0 || track >= int(Tracks))
             return;
-        instruments.noteOn(track, std::clamp(pitch, 24, 96), std::clamp(velocity, 0.f, 1.f));
+        instruments.noteOn(track, std::clamp(pitch, 24, 96), std::clamp(velocity, 0.f, 1.f),
+                           gateFrames);
     }
     void enqueueTimed(const TimedCommand &event) noexcept {
         if (pendingTimedCount == pendingTimed.size()) {
@@ -205,6 +220,8 @@ class Engine {
 
   public:
     Queue<Command, 32> commands;
+    // Audio thread returns replaced snapshots; the control thread frees them.
+    Queue<Project *, 64> retiredProjects;
     // Audio thread produces clip events; the controller drains and sends them
     // through ALSA. No ALSA calls or allocations occur in render().
     Queue<MidiOutEvent, 2048> midiOutput;
@@ -222,6 +239,42 @@ class Engine {
     Engine() = default;
     ~Engine() {
         delete pluginHost;
+        // Audio has stopped. Free the live snapshot, queued-but-unadopted
+        // commands and anything retired but not yet reclaimed.
+        Command pending;
+        while (commands.pop(pending))
+            delete pending.snapshot;
+        Project *retired = nullptr;
+        while (retiredProjects.pop(retired))
+            delete retired;
+        delete project;
+    }
+    // Control thread only. Frees snapshots the audio thread has retired.
+    void reclaimProjects() noexcept {
+        Project *retired = nullptr;
+        while (retiredProjects.pop(retired)) {
+            delete retired;
+            projectsInFlight--;
+        }
+    }
+    // Control thread only. Copies `next` into a fresh snapshot and queues it
+    // with `action` (Update or Restore). Fails, without side effects, if the
+    // command queue is full or too many snapshots are awaiting adoption.
+    bool submitProject(Action action, const Project &next,
+                       const std::array<int, Tracks> &activeClips = {}) {
+        reclaimProjects();
+        if (projectsInFlight >= MaxProjectsInFlight)
+            return false;
+        Command cmd;
+        cmd.action = action;
+        cmd.snapshot = new Project(next);
+        cmd.active = activeClips;
+        if (!commands.push(cmd)) {
+            delete cmd.snapshot;
+            return false;
+        }
+        projectsInFlight++;
+        return true;
     }
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
@@ -235,7 +288,7 @@ class Engine {
             case Action::Restore:
                 for (unsigned i = 0; i < Tracks; i++)
                     emitTrackNotesOff(i);
-                project = cmd.project;
+                adoptProject(cmd.snapshot);
                 for (unsigned i = 0; i < Tracks; i++)
                     active[i] = std::clamp(cmd.active[i], 0, 3);
                 pending.fill(-1);
@@ -248,7 +301,7 @@ class Engine {
                 lastMidiTick = UINT64_MAX;
                 break;
             case Action::Update:
-                project = cmd.project;
+                adoptProject(cmd.snapshot);
                 break;
             case Action::Start:
                 playing = true;
@@ -299,7 +352,7 @@ class Engine {
                 break;
             }
             }
-        const bool solo = std::any_of(project.tracks.begin(), project.tracks.end(),
+        const bool solo = std::any_of(project->tracks.begin(), project->tracks.end(),
                                       [](auto &t) { return t.solo; });
         for (std::size_t n = 0; n < frames; n++) {
             while (pendingTimedCount && pendingTimed[0].targetFrame <= blockStart + n) {
@@ -325,11 +378,13 @@ class Engine {
                             pending[i] = -1;
                         }
                 for (unsigned i = 0; i < Tracks; i++) {
-                    const auto &track = project.tracks[i];
+                    const auto &track = project->tracks[i];
                     const auto &legacy = track.clips[active[i]][step];
                     const auto &midi = track.midiClips[active[i]];
                     if (midi.noteCount == 0 && legacy.velocity > 0)
-                        trigger(i, legacy.pitch, legacy.velocity);
+                        // Gate 90% of a step so slow tempos hold, fast ones don't smear.
+                        trigger(i, legacy.pitch, legacy.velocity,
+                                int(rate * 60.0 / std::clamp(project->bpm, 40.f, 240.f) / 4 * .9));
                 }
             }
             if (playing) {
@@ -339,7 +394,7 @@ class Engine {
                     // Release first so a repeated pitch can retrigger cleanly
                     // when one note ends on the same tick another begins.
                     for (unsigned i = 0; i < Tracks; i++) {
-                        const auto &track = project.tracks[i];
+                        const auto &track = project->tracks[i];
                         const auto &clip = track.midiClips[active[i]];
                         if (clip.noteCount > 0) {
                             if (clip.loopTicks == 0)
@@ -367,7 +422,7 @@ class Engine {
                         }
                     }
                     for (unsigned i = 0; i < Tracks; i++) {
-                        const auto &track = project.tracks[i];
+                        const auto &track = project->tracks[i];
                         const auto &clip = track.midiClips[active[i]];
                         if (clip.noteCount > 0) {
                             if (clip.loopTicks == 0)
@@ -395,9 +450,9 @@ class Engine {
                     }
                 }
             }
-            master += (std::clamp(project.master, 0.f, 1.f) - master) * .002f;
+            master += (std::clamp(project->master, 0.f, 1.f) - master) * .002f;
             for (unsigned i = 0; i < Tracks; i++) {
-                const auto &t = project.tracks[i];
+                const auto &t = project->tracks[i];
                 const float target =
                     t.mute || (solo && !t.solo) ? 0 : std::clamp(t.volume, 0.f, 1.f);
                 gains[i] += (target - gains[i]) * .003f;
@@ -409,7 +464,7 @@ class Engine {
             if (playing)
                 frame++;
             if (playing)
-                midiTickPosition += double(std::clamp(project.bpm, 40.f, 240.f)) * TicksPerQuarter / (60.0 * rate);
+                midiTickPosition += double(std::clamp(project->bpm, 40.f, 240.f)) * TicksPerQuarter / (60.0 * rate);
             renderedFrame++;
         }
         // Mixed in after the per-sample loop, at block rate rather than the

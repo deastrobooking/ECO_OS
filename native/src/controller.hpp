@@ -93,10 +93,11 @@ class Controller : public QObject {
         return false;
     }
     bool update() {
-        eco::Command c;
-        c.action = eco::Action::Update;
-        c.project = project;
-        return send(c);
+        if (engine.submitProject(eco::Action::Update, project))
+            return true;
+        message_ = "Command queue busy; try again.";
+        emit changed();
+        return false;
     }
     QString path() const {
         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
@@ -313,6 +314,7 @@ class Controller : public QObject {
             // free; the audio thread must not allocate or free memory.
             if (auto *old = engine.retiredPlugin.exchange(nullptr, std::memory_order_acquire))
                 delete old;
+            engine.reclaimProjects();
             emit tick();
         });
         timer.start(33);
@@ -592,12 +594,11 @@ class Controller : public QObject {
             return;
         }
         // Replace project, transport and clip selection in one bounded command.
-        eco::Command restore;
-        restore.action = eco::Action::Restore;
-        restore.project = loaded.project;
-        restore.active = loaded.active;
-        if (!send(restore))
+        if (!engine.submitProject(eco::Action::Restore, loaded.project, loaded.active)) {
+            message_ = "Command queue busy; try again.";
+            emit changed();
             return;
+        }
         project = loaded.project;
         playing_ = false;
         name_ = QString::fromStdString(loaded.name);

@@ -71,10 +71,10 @@ automation identity and value. Clip launch quantization and song arrangement
 belong in transport/project data, not hidden in UI state.
 
 The current implementation uses fixed event arrays, so it has bounded storage
-and performs no event-vector allocation in the callback. Its full `Project`
-still travels inside each `Command`, however; replace that growing value copy
-with immutable snapshots and audio-thread adoption/reclamation before raising
-the event cap substantially. Overflow must be reported rather than silently
+and performs no event-vector allocation in the callback. Project changes
+travel as heap snapshots that the audio thread adopts by pointer swap and
+returns for control-thread reclamation (`Engine::submitProject`), so the event
+cap can grow without enlarging commands. Overflow must be reported rather than silently
 dropping arbitrary note-offs. Keep MIDI 1.0 devices as the compatibility
 baseline while designing event values wide enough for later MIDI 2.0 resolution
 and per-note expression.

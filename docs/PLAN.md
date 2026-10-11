@@ -116,8 +116,8 @@ review are in [REVIEW.md](REVIEW.md); it refines the items below.
    through a PipeWire/monotonic clock anchor into a fixed audio-thread event
    scheduler; validate alignment and late-event behavior on hardware. MIDI
    output now uses a bounded audio-to-control queue and ALSA output port;
-   measure external timing and add scheduled output/port routing. Replace
-   growing project copies through the callback queue with immutable snapshots.
+   measure external timing and add scheduled output/port routing. Project
+   changes now travel as immutable snapshots adopted by pointer swap.
    Design the CV device interface
    alongside this work and choose the first
    external DAC/controller before claiming CV hardware support. Details and

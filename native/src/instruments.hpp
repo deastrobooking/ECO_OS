@@ -34,7 +34,7 @@ class LightInstruments {
     ~LightInstruments() = default;
     LightInstruments(const LightInstruments &) = delete;
     LightInstruments &operator=(const LightInstruments &) = delete;
-    void noteOn(int track, int pitch, float velocity) noexcept {
+    void noteOn(int track, int pitch, float velocity, int gateFrames = 7200) noexcept {
         if (track < 3) {
             drums[track].handleEvent({eco::DeviceEventKind::NoteOn, 0,
                                       static_cast<uint8_t>(pitch), velocity});
@@ -48,7 +48,7 @@ class LightInstruments {
         auto &synth = fm[track - 4];
         synth.handleEvent({eco::DeviceEventKind::NoteOn, 0,
                            static_cast<uint8_t>(pitch), velocity});
-        releaseIn[track - 4] = 7200; // MVP clip/audition gate: 150 ms.
+        releaseIn[track - 4] = std::max(gateFrames, 1); // Default 150 ms audition gate.
     }
     void midiNoteOn(int track, int pitch, float velocity) noexcept {
         if (track < 0 || track >= 6)

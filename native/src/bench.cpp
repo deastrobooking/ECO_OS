@@ -15,10 +15,7 @@
 namespace {
 double secondsPerRun(unsigned blockFrames, unsigned totalFrames) {
     eco::Engine engine;
-    eco::Command update;
-    update.action = eco::Action::Update;
-    update.project = eco::demo();
-    engine.commands.push(update);
+    engine.submitProject(eco::Action::Update, eco::demo());
     eco::Command play;
     play.action = eco::Action::Start;
     engine.commands.push(play);

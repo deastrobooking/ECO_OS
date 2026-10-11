@@ -104,16 +104,15 @@ int main() {
     check(q.pop(value) && value == 2 && q.pop(value) && value == 3 && q.pop(value) && value == 4 &&
               !q.pop(value),
           "queue drain");
-    static eco::Engine e; // ~1.3 MB: keep off the stack
+    static eco::Engine e;
     std::array<float, 256> block{};
     render(e, block.data(), 128);
     for (auto v : block)
         check(v == 0, "initial silence");
     eco::Command c;
-    c.action = eco::Action::Update;
-    c.project = eco::demo();
-    c.project.bpm = 120;
-    e.commands.push(c);
+    eco::Project proj = eco::demo();
+    proj.bpm = 120;
+    check(e.submitProject(eco::Action::Update, proj), "update snapshot accepted");
     c.action = eco::Action::Start;
     e.commands.push(c);
     std::vector<float> song(96000 * 2);
@@ -141,10 +140,9 @@ int main() {
     for (auto v : block)
         check(v == 0, "stop clears voices");
     check(e.currentStep.load() == -1, "stop clears playhead");
-    c.action = eco::Action::Update;
-    for (auto &t : c.project.tracks)
+    for (auto &t : proj.tracks)
         t.mute = true;
-    e.commands.push(c);
+    check(e.submitProject(eco::Action::Update, proj), "mute snapshot accepted");
     c.action = eco::Action::Start;
     e.commands.push(c);
     render(e, song.data(), 96000);
@@ -152,17 +150,15 @@ int main() {
     for (std::size_t i = 48000; i < song.size(); i++)
         tail += song[i] * song[i];
     check(tail < 1e-9, "mute settles to silence");
-    c.action = eco::Action::Restore;
-    c.project = eco::demo();
-    c.active = {3, 2, 1, 0, 2, 3};
-    check(e.commands.push(c), "restore command accepted");
+    check(e.submitProject(eco::Action::Restore, eco::demo(), {3, 2, 1, 0, 2, 3}),
+          "restore command accepted");
     render(e, block.data(), 128);
     check(e.currentStep.load() == -1, "restore stops transport atomically");
     check(e.activeClips.load() == (3u | (2u << 2) | (1u << 4) | (2u << 8) | (3u << 10)),
           "restore selects all clips atomically");
     for (auto v : block)
         check(v == 0, "restore silences old voices");
-    static eco::Engine first, second; // ~1.3 MB: keep off the stack
+    static eco::Engine first, second;
     c.action = eco::Action::Start;
     first.commands.push(c);
     second.commands.push(c);
@@ -174,7 +170,7 @@ int main() {
     {
         // Audition scheduled mid-block: exact silence strictly before its
         // frameOffset, audible output at/after it.
-        static eco::Engine timed; // ~1.3 MB: keep off the stack
+        static eco::Engine timed;
         eco::Command audition;
         audition.action = eco::Action::Audition;
         audition.track = 4;
@@ -197,7 +193,7 @@ int main() {
         // Scheduling follows frameOffset, not push order: NoteOff (offset 50)
         // pushed before Audition (offset 0) must still let the note sound
         // first and release after it, not the reverse.
-        static eco::Engine ordering; // ~1.3 MB: keep off the stack
+        static eco::Engine ordering;
         eco::Command noteOff;
         noteOff.action = eco::Action::NoteOff;
         noteOff.track = 4;
@@ -223,7 +219,7 @@ int main() {
     {
         // A frameOffset beyond the block is clamped to the last valid frame,
         // not left to silently drop or index out of bounds.
-        static eco::Engine clamped; // ~1.3 MB: keep off the stack
+        static eco::Engine clamped;
         eco::Command audition;
         audition.action = eco::Action::Audition;
         audition.track = 4;
@@ -238,21 +234,20 @@ int main() {
     }
     {
         // Step grid and MIDI tick clock must stay locked across tempo changes.
-        static eco::Engine tempo; // ~1.3 MB: keep off the stack
+        static eco::Engine tempo;
         eco::Command cmd;
-        cmd.action = eco::Action::Update;
-        cmd.project = eco::demo();
-        cmd.project.bpm = 120;
-        tempo.commands.push(cmd);
+        eco::Project tempoProject = eco::demo();
+        tempoProject.bpm = 120;
+        tempo.submitProject(eco::Action::Update, tempoProject);
         cmd.action = eco::Action::Start;
         tempo.commands.push(cmd);
         std::array<float, 64 * 2> buf{};
         const float tempos[] = {120, 60, 200, 45, 240, 97};
         for (unsigned block = 0; block < 4000; block++) {
             if (block % 500 == 250) {
-                cmd.action = eco::Action::Update;
-                cmd.project.bpm = tempos[(block / 500) % 6];
-                tempo.commands.push(cmd);
+                tempoProject.bpm = tempos[(block / 500) % 6];
+                check(tempo.submitProject(eco::Action::Update, tempoProject),
+                      "tempo snapshot accepted");
             }
             render(tempo, buf.data(), 64);
             // transportTick is published after the block's final advance, so
@@ -265,8 +260,25 @@ int main() {
                   "step grid stays locked to the tick clock across tempo changes");
         }
     }
+    {
+        // Snapshots are bounded and recycled: far more updates than the
+        // in-flight cap succeed as long as the audio thread adopts them and
+        // the control thread reclaims, and an unrendered burst is refused.
+        static eco::Engine recycle;
+        eco::Project p = eco::demo();
+        std::array<float, 64 * 2> buf{};
+        for (unsigned i = 0; i < 1000; i++) {
+            p.bpm = 60 + float(i % 100);
+            check(recycle.submitProject(eco::Action::Update, p), "snapshot recycled");
+            render(recycle, buf.data(), 64);
+        }
+        unsigned accepted = 0;
+        while (recycle.submitProject(eco::Action::Update, p))
+            accepted++;
+        check(accepted > 0 && accepted < 64, "unrendered snapshot burst is bounded");
+    }
     std::puts("PASS: LIGHT FM6/release, drum isolation, SIMD scalar equivalence/tails, queue "
               "overflow/wrap, silence, sample clock, finite audio, quantized launch, stop, mute, "
-              "block-size invariance, sample-accurate command scheduling, tempo/tick lock, no C++ "
+              "block-size invariance, sample-accurate command scheduling, tempo/tick lock, snapshot recycling, no C++ "
               "render allocations");
 }
